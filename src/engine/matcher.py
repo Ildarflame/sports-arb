@@ -12,6 +12,10 @@ from src.models import Market, Platform, SportEvent
 
 logger = logging.getLogger(__name__)
 
+# Sports where draws are possible — don't allow swapped team matching
+# (swapped price inversion is only valid for 2-outcome sports)
+_THREE_OUTCOME_SPORTS = {"soccer", "rugby", "cricket"}
+
 # Minimum similarity score (0-100) to consider a team name match
 TEAM_MATCH_THRESHOLD = 75
 # Higher threshold for single-team matching (more false positive prone)
@@ -606,6 +610,25 @@ def _grouping_key(m: Market) -> tuple[str, str]:
     return (m.sport or "_any", m.market_type or "_any")
 
 
+def _dedup_markets(markets: list[Market]) -> list[Market]:
+    """Keep one market per event_id (game markets only).
+
+    For 2-way game markets, both platforms return 2 markets per game
+    (one per team). Keep only the first one encountered to avoid
+    double-matching and duplicate arbitrage calculations.
+    Futures markets are not deduped (each team is a separate bet).
+    """
+    seen_events: set[str] = set()
+    result: list[Market] = []
+    for m in markets:
+        if m.market_type == "game" and m.event_id in seen_events:
+            continue
+        if m.market_type == "game":
+            seen_events.add(m.event_id)
+        result.append(m)
+    return result
+
+
 def match_events(
     poly_markets: list[Market],
     kalshi_markets: list[Market],
@@ -615,6 +638,10 @@ def match_events(
     Uses sport + market_type pre-grouping for O(n) instead of O(n²),
     then applies date/group filters and fuzzy name matching within groups.
     """
+    # Deduplicate game markets: keep 1 market per event_id per platform
+    poly_markets = _dedup_markets(poly_markets)
+    kalshi_markets = _dedup_markets(kalshi_markets)
+
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
 
@@ -670,7 +697,7 @@ def match_events(
                     team_similarity(pm.team_a, km.team_b, sport),
                     team_similarity(pm.team_b, km.team_a, sport),
                 )
-                if swapped_score > direct_score:
+                if swapped_score > direct_score and sport not in _THREE_OUTCOME_SPORTS:
                     score = swapped_score
                     is_swapped = True
                 else:
