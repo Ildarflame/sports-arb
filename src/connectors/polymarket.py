@@ -157,6 +157,7 @@ class PolymarketConnector(BaseConnector):
                         question = m.get("question", "")
                         group_item_title = m.get("groupItemTitle", "")
                         market_id_base = str(m.get("id", m.get("conditionId", "")))
+                        market_slug = m.get("slug", "")
 
                         # Extract game_date for daily games
                         game_date = None
@@ -192,7 +193,7 @@ class PolymarketConnector(BaseConnector):
                                 sport=sport,
                                 game_date=game_date,
                                 event_group=event_group,
-                                url=f"https://polymarket.com/event/{slug}",
+                                url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                                 price=price,
                                 raw_data={
                                     "clob_token_ids": tokens,
@@ -237,7 +238,7 @@ class PolymarketConnector(BaseConnector):
                                     sport=sport,
                                     game_date=game_date,
                                     event_group=event_group,
-                                    url=f"https://polymarket.com/event/{slug}",
+                                    url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                                     price=price,
                                     raw_data={
                                         "clob_token_ids": team_token,

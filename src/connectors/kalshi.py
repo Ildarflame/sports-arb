@@ -288,7 +288,7 @@ class KalshiConnector(BaseConnector):
                             _parse_date_from_kalshi_ticker(event_ticker)
                             or _parse_date_from_iso(m.get("close_time") or m.get("expiration_time"))
                         ),
-                        url=f"https://kalshi.com/markets/{ticker}",
+                        url=f"https://kalshi.com/events/{event_ticker.lower()}",
                         raw_data={
                             "yes_team": yes_team,
                             "no_sub_title": no_sub,
@@ -469,7 +469,7 @@ class KalshiConnector(BaseConnector):
             sport=sport,
             game_date=game_date,
             event_group=event_group,
-            url=f"https://kalshi.com/markets/{ticker}",
+            url=f"https://kalshi.com/events/{event_ticker.lower()}",
             raw_data={
                 "yes_team": yes_team,
                 "no_sub_title": no_sub,
