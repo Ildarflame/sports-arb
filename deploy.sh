@@ -46,7 +46,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/marmok/sports-arb
 ExecStart=/home/marmok/.local/bin/uv run python -m src.main
-Restart=on-failure
+Restart=always
 RestartSec=5
 Environment=PATH=/home/marmok/.local/bin:/usr/local/bin:/usr/bin:/bin
 

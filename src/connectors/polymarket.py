@@ -228,12 +228,25 @@ class PolymarketConnector(BaseConnector):
         seen_event_ids.update(sports_seen)
         sports_count = len(markets)
 
-        # Secondary fetch: esports-specific tags (covers CS2, LoL, Valorant, Dota2 games)
+        # Secondary fetch: extra tags in parallel batches of 5
         extra_count = 0
-        for tag in self._EXTRA_TAG_SLUGS:
-            tag_markets, tag_seen = await self._fetch_events_by_tag(
-                tag, max_pages=5, seen_event_ids=seen_event_ids,
-            )
+        _tag_sem = asyncio.Semaphore(5)
+
+        async def _fetch_tag(tag: str) -> tuple[list[Market], set[str]]:
+            async with _tag_sem:
+                return await self._fetch_events_by_tag(
+                    tag, max_pages=5, seen_event_ids=seen_event_ids,
+                )
+
+        tag_results = await asyncio.gather(
+            *[_fetch_tag(tag) for tag in self._EXTRA_TAG_SLUGS],
+            return_exceptions=True,
+        )
+        for res in tag_results:
+            if isinstance(res, Exception):
+                logger.warning(f"Tag fetch error: {res}")
+                continue
+            tag_markets, tag_seen = res
             markets.extend(tag_markets)
             seen_event_ids.update(tag_seen)
             extra_count += len(tag_markets)

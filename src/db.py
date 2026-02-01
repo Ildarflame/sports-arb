@@ -10,32 +10,6 @@ from src.config import settings
 from src.models import ArbitrageOpportunity
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    team_a TEXT NOT NULL,
-    team_b TEXT NOT NULL,
-    start_time TEXT,
-    category TEXT DEFAULT 'sports',
-    polymarket_id TEXT,
-    kalshi_id TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS market_prices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id TEXT NOT NULL,
-    platform TEXT NOT NULL,
-    market_id TEXT NOT NULL,
-    yes_price REAL,
-    no_price REAL,
-    yes_bid REAL,
-    yes_ask REAL,
-    volume REAL DEFAULT 0,
-    recorded_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (event_id) REFERENCES events(id)
-);
-
 CREATE TABLE IF NOT EXISTS opportunities (
     id TEXT PRIMARY KEY,
     event_title TEXT NOT NULL,
@@ -53,7 +27,6 @@ CREATE TABLE IF NOT EXISTS opportunities (
     details TEXT DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_prices_event ON market_prices(event_id, platform);
 CREATE INDEX IF NOT EXISTS idx_opps_active ON opportunities(still_active, found_at);
 """
 
@@ -72,6 +45,11 @@ class Database:
     async def close(self) -> None:
         if self._db:
             await self._db.close()
+
+    async def commit(self) -> None:
+        """Explicit commit — call once at end of scan loop."""
+        if self._db:
+            await self._db.commit()
 
     async def find_active_by_key(
         self, team_a: str, platform_yes: str, platform_no: str,
@@ -107,7 +85,6 @@ class Database:
                     opp.id,
                 ),
             )
-            await self._db.commit()
             return opp.id
 
         if not opp.id:
@@ -127,7 +104,6 @@ class Database:
                 json.dumps(opp.details),
             ),
         )
-        await self._db.commit()
         return opp.id
 
     async def get_active_opportunities(self, limit: int = 50) -> list[dict]:
@@ -163,7 +139,6 @@ class Database:
         await self._db.execute(
             "UPDATE opportunities SET still_active = 0 WHERE id = ?", (opp_id,)
         )
-        await self._db.commit()
 
     async def deactivate_by_key(
         self, team_a: str, platform_yes: str, platform_no: str,
@@ -175,22 +150,15 @@ class Database:
                  AND team_a = ? AND platform_buy_yes = ? AND platform_buy_no = ?""",
             (team_a, platform_yes, platform_no),
         )
-        await self._db.commit()
         return cursor.rowcount
 
-    async def save_price_snapshot(
-        self, event_id: str, platform: str, market_id: str,
-        yes_price: float, no_price: float,
-        yes_bid: float | None = None, yes_ask: float | None = None,
-        volume: float = 0,
-    ) -> None:
-        await self._db.execute(
-            """INSERT INTO market_prices
-               (event_id, platform, market_id, yes_price, no_price, yes_bid, yes_ask, volume)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (event_id, platform, market_id, yes_price, no_price, yes_bid, yes_ask, volume),
+    async def cleanup_old(self, days: int = 7) -> int:
+        """Delete inactive opportunities older than `days` days."""
+        cursor = await self._db.execute(
+            "DELETE FROM opportunities WHERE still_active = 0 AND found_at < datetime('now', ?)",
+            (f"-{days} days",),
         )
-        await self._db.commit()
+        return cursor.rowcount
 
 
 db = Database()

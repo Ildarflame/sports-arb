@@ -423,81 +423,106 @@ class KalshiConnector(BaseConnector):
 
             futures_from_hardcoded = len(markets) - game_count
 
-            # Strategy 3: Fetch championship/futures events from known series
-            for series_ticker in self.FUTURES_SERIES_TICKERS:
-                try:
-                    await asyncio.sleep(0.3)  # Rate limit: pause between series
-                    evt_cursor = ""
-                    for _ in range(5):  # Max 5 pages per series
-                        params = {
-                            "status": "open",
-                            "series_ticker": series_ticker,
-                            "with_nested_markets": "true",
-                            "limit": 50,
-                        }
-                        if evt_cursor:
-                            params["cursor"] = evt_cursor
-                        resp = await self._request_with_retry("GET", "/events", params=params)
-                        events_data = resp.json()
-                        for evt in events_data.get("events", []):
-                            for m in evt.get("markets", []):
-                                ticker = m.get("ticker", "")
-                                if ticker in seen_tickers:
-                                    continue
-                                parsed = self._parse_market(m)
-                                if parsed:
-                                    seen_tickers.add(ticker)
-                                    markets.append(parsed)
-                        evt_cursor = events_data.get("cursor", "")
-                        if not evt_cursor or not events_data.get("events"):
-                            break
-                except Exception:
-                    logger.debug(f"Kalshi events search for series {series_ticker} failed")
+            # Strategy 3: Fetch championship/futures events from known series (parallel)
+            _series_sem = asyncio.Semaphore(5)
+
+            async def _fetch_futures_series(series_ticker: str) -> list[Market]:
+                async with _series_sem:
+                    await asyncio.sleep(0.1)  # Small stagger between launches
+                    result: list[Market] = []
+                    try:
+                        evt_cursor = ""
+                        for _ in range(5):
+                            params = {
+                                "status": "open",
+                                "series_ticker": series_ticker,
+                                "with_nested_markets": "true",
+                                "limit": 50,
+                            }
+                            if evt_cursor:
+                                params["cursor"] = evt_cursor
+                            resp = await self._request_with_retry("GET", "/events", params=params)
+                            events_data = resp.json()
+                            for evt in events_data.get("events", []):
+                                for m in evt.get("markets", []):
+                                    ticker = m.get("ticker", "")
+                                    if ticker in seen_tickers:
+                                        continue
+                                    parsed = self._parse_market(m)
+                                    if parsed:
+                                        result.append(parsed)
+                            evt_cursor = events_data.get("cursor", "")
+                            if not evt_cursor or not events_data.get("events"):
+                                break
+                    except Exception:
+                        logger.debug(f"Kalshi events search for series {series_ticker} failed")
+                    return result
+
+            futures_results = await asyncio.gather(
+                *[_fetch_futures_series(st) for st in self.FUTURES_SERIES_TICKERS],
+                return_exceptions=True,
+            )
+            for res in futures_results:
+                if isinstance(res, list):
+                    for m in res:
+                        if m.market_id not in seen_tickers:
+                            seen_tickers.add(m.market_id)
+                            markets.append(m)
 
             series_futures_count = len(markets) - game_count - futures_from_hardcoded
 
-            # Strategy 4: Fetch daily game events from known game series
-            for series_ticker in self.GAME_SERIES_TICKERS:
-                try:
-                    await asyncio.sleep(0.3)  # Rate limit: pause between series
-                    evt_cursor = ""
-                    for _ in range(3):  # Max 3 pages per game series
-                        params = {
-                            "status": "open",
-                            "series_ticker": series_ticker,
-                            "with_nested_markets": "true",
-                            "limit": 50,
-                        }
-                        if evt_cursor:
-                            params["cursor"] = evt_cursor
-                        resp = await self._request_with_retry("GET", "/events", params=params)
-                        events_data = resp.json()
-                        for evt in events_data.get("events", []):
-                            evt_parsed: list[Market] = []
-                            for m in evt.get("markets", []):
-                                ticker = m.get("ticker", "")
-                                if ticker in seen_tickers:
-                                    continue
-                                parsed = self._parse_market(m, market_type="game")
-                                if parsed:
-                                    seen_tickers.add(ticker)
-                                    evt_parsed.append(parsed)
-                            # Cross-reference team_b from sibling markets
-                            # In a 2-market event (A wins / B wins), set team_b of A = team_a of B
-                            # Only when team_a differs (same title = same team_a, skip)
-                            if len(evt_parsed) == 2:
-                                a, b = evt_parsed
-                                if a.team_a.lower() != b.team_a.lower():
-                                    if not a.team_b or len(a.team_b.split()) == 1:
-                                        a.team_b = b.team_a
-                                    if not b.team_b or len(b.team_b.split()) == 1:
-                                        b.team_b = a.team_a
-                            markets.extend(evt_parsed)
-                        evt_cursor = events_data.get("cursor", "")
-                        if not evt_cursor or not events_data.get("events"):
-                            break
-                except Exception:
-                    logger.debug(f"Kalshi game series {series_ticker} fetch failed")
+            # Strategy 4: Fetch daily game events from known game series (parallel)
+            async def _fetch_game_series(series_ticker: str) -> list[Market]:
+                async with _series_sem:
+                    await asyncio.sleep(0.1)
+                    result: list[Market] = []
+                    try:
+                        evt_cursor = ""
+                        for _ in range(3):
+                            params = {
+                                "status": "open",
+                                "series_ticker": series_ticker,
+                                "with_nested_markets": "true",
+                                "limit": 50,
+                            }
+                            if evt_cursor:
+                                params["cursor"] = evt_cursor
+                            resp = await self._request_with_retry("GET", "/events", params=params)
+                            events_data = resp.json()
+                            for evt in events_data.get("events", []):
+                                evt_parsed: list[Market] = []
+                                for m in evt.get("markets", []):
+                                    ticker = m.get("ticker", "")
+                                    if ticker in seen_tickers:
+                                        continue
+                                    parsed = self._parse_market(m, market_type="game")
+                                    if parsed:
+                                        evt_parsed.append(parsed)
+                                if len(evt_parsed) == 2:
+                                    a, b = evt_parsed
+                                    if a.team_a.lower() != b.team_a.lower():
+                                        if not a.team_b or len(a.team_b.split()) == 1:
+                                            a.team_b = b.team_a
+                                        if not b.team_b or len(b.team_b.split()) == 1:
+                                            b.team_b = a.team_a
+                                result.extend(evt_parsed)
+                            evt_cursor = events_data.get("cursor", "")
+                            if not evt_cursor or not events_data.get("events"):
+                                break
+                    except Exception:
+                        logger.debug(f"Kalshi game series {series_ticker} fetch failed")
+                    return result
+
+            game_results = await asyncio.gather(
+                *[_fetch_game_series(st) for st in self.GAME_SERIES_TICKERS],
+                return_exceptions=True,
+            )
+            for res in game_results:
+                if isinstance(res, list):
+                    for m in res:
+                        if m.market_id not in seen_tickers:
+                            seen_tickers.add(m.market_id)
+                            markets.append(m)
 
             game_series_count = len(markets) - game_count - futures_from_hardcoded - series_futures_count
 
@@ -609,10 +634,7 @@ class KalshiConnector(BaseConnector):
     async def fetch_price(self, market_id: str) -> MarketPrice | None:
         """Fetch price for a single Kalshi market."""
         try:
-            path = f"/markets/{market_id}"
-            auth_headers = self._sign_request("GET", path)
-            resp = await self._http.get(path, headers=auth_headers)
-            resp.raise_for_status()
+            resp = await self._request_with_retry("GET", f"/markets/{market_id}")
             data = resp.json().get("market", resp.json())
 
             yes_bid = (data.get("yes_bid") or 0) / 100

@@ -120,44 +120,69 @@ async def fetch_and_update_prices(
         logger.info(f"Individual price fetches: {len(individual_tasks)} (negRisk + batch fallback)")
 
 
-async def fetch_book_for_candidates(
+async def fetch_books_for_candidates(
     poly: PolymarketConnector,
+    kalshi: KalshiConnector,
     candidates: list[SportEvent],
 ) -> None:
-    """Fetch Polymarket order books for arb candidates to get bid/ask prices."""
-    tasks: list[tuple[SportEvent, asyncio.Task]] = []
+    """Fetch order books for arb candidates: Polymarket books + fresh Kalshi prices."""
+    poly_tasks: list[tuple[SportEvent, asyncio.Task]] = []
+    kalshi_tasks: list[tuple[SportEvent, asyncio.Task]] = []
+
     for event in candidates:
         pm = event.markets.get(Platform.POLYMARKET)
-        if not pm:
-            continue
-        token_ids = pm.raw_data.get("clob_token_ids", [])
-        token_id = token_ids[0] if token_ids else pm.market_id
-        task = asyncio.ensure_future(
-            _fetch_with_semaphore(poly.fetch_book(token_id))
-        )
-        tasks.append((event, task))
+        if pm:
+            token_ids = pm.raw_data.get("clob_token_ids", [])
+            token_id = token_ids[0] if token_ids else pm.market_id
+            task = asyncio.ensure_future(
+                _fetch_with_semaphore(poly.fetch_book(token_id))
+            )
+            poly_tasks.append((event, task))
 
-    if not tasks:
+        km = event.markets.get(Platform.KALSHI)
+        if km:
+            task = asyncio.ensure_future(
+                _fetch_with_semaphore(kalshi.fetch_price(km.market_id))
+            )
+            kalshi_tasks.append((event, task))
+
+    all_tasks = [t[1] for t in poly_tasks] + [t[1] for t in kalshi_tasks]
+    if not all_tasks:
         return
 
-    results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
-    updated = 0
-    for (event, _), result in zip(tasks, results):
-        if isinstance(result, Exception):
-            continue
-        if result is None:
+    results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+    # Apply Polymarket book results
+    poly_updated = 0
+    for i, (event, _) in enumerate(poly_tasks):
+        result = results[i]
+        if isinstance(result, Exception) or result is None:
             continue
         pm = event.markets.get(Platform.POLYMARKET)
         if pm and pm.price:
-            # Preserve volume from batch price, update bid/ask from book
             result.volume = pm.price.volume
             pm.price = result
-            updated += 1
+            poly_updated += 1
         elif pm:
             pm.price = result
-            updated += 1
+            poly_updated += 1
 
-    logger.info(f"Book fetch: {updated}/{len(tasks)} Polymarket order books updated")
+    # Apply Kalshi fresh price results
+    kalshi_updated = 0
+    offset = len(poly_tasks)
+    for i, (event, _) in enumerate(kalshi_tasks):
+        result = results[offset + i]
+        if isinstance(result, Exception) or result is None:
+            continue
+        km = event.markets.get(Platform.KALSHI)
+        if km:
+            km.price = result
+            kalshi_updated += 1
+
+    logger.info(
+        f"Book fetch: {poly_updated}/{len(poly_tasks)} Poly books, "
+        f"{kalshi_updated}/{len(kalshi_tasks)} Kalshi prices refreshed"
+    )
 
 
 def broadcast_event(event_type: str, data: dict) -> None:
@@ -210,7 +235,8 @@ async def ws_price_listener(poly: PolymarketConnector) -> None:
 
 def _update_ws_subscriptions(events: list[SportEvent]) -> None:
     """Refresh WS subscription set and token→event mapping from matched events."""
-    _token_to_event.clear()
+    global _token_to_event
+    new_map: dict[str, SportEvent] = {}
     new_ids: set[str] = set()
     for event in events:
         pm = event.markets.get(Platform.POLYMARKET)
@@ -220,8 +246,10 @@ def _update_ws_subscriptions(events: list[SportEvent]) -> None:
         if token_ids:
             tid = token_ids[0]
             new_ids.add(tid)
-            _token_to_event[tid] = event
+            new_map[tid] = event
     old_count = len(app_state["ws_subscribed_ids"])
+    # Atomic swap: single assignment replaces the entire dict
+    _token_to_event = new_map
     app_state["ws_subscribed_ids"] = new_ids
     if len(new_ids) != old_count:
         logger.info(f"WS subscriptions updated: {old_count} → {len(new_ids)} tokens")
@@ -246,6 +274,7 @@ def _apply_ws_cache(events: list[SportEvent]) -> int:
 
 async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
     """Main scanning loop: fetch events, match, check arbitrage."""
+    _scan_count = 0
     while app_state["running"]:
         try:
             scan_start = time.monotonic()
@@ -316,6 +345,9 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                     km = event.markets.get(Platform.KALSHI)
                     if pm and km and pm.price and km.price:
                         pp, kp = pm.price, km.price
+                        # Skip dead markets where both platforms have zero volume
+                        if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
+                            continue
                         if event.teams_swapped:
                             # Swapped: Kalshi YES = opposite team, so invert
                             cost1 = pp.yes_price + (1 - kp.yes_price)
@@ -332,7 +364,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         f"Arb candidates: {len(arb_candidates)}/{len(matched)} "
                         f"passed midpoint screen, fetching order books"
                     )
-                    await fetch_book_for_candidates(poly, arb_candidates)
+                    await fetch_books_for_candidates(poly, kalshi, arb_candidates)
 
                 # Track which arbs are found this scan (for deactivation)
                 current_arb_keys: set[tuple[str, str, str]] = set()
@@ -341,41 +373,31 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 for event in matched:
                     opp = calculate_arbitrage(event)
                     if opp and opp.roi_after_fees >= settings.min_arb_percent:
-                        # Skip if ROI suspiciously high
-                        suspicious = opp.roi_after_fees > settings.max_arb_percent
-                        if suspicious:
-                            opp.details["suspicious"] = True
+                        # Skip suspicious arbs entirely — don't save to DB
+                        if opp.roi_after_fees > settings.max_arb_percent:
                             logger.warning(
-                                f"SUSPICIOUS ARB (ROI>{settings.max_arb_percent}%): "
+                                f"SUSPICIOUS ARB (skipped, ROI>{settings.max_arb_percent}%): "
                                 f"{opp.event_title} ROI={opp.roi_after_fees}%"
                             )
+                            continue
 
                         arb_key = (
                             opp.team_a,
                             opp.platform_buy_yes.value,
                             opp.platform_buy_no.value,
                         )
+                        current_arb_keys.add(arb_key)
 
                         opp_id = await db.save_opportunity(opp)
-
-                        if suspicious:
-                            # Deactivate ALL active entries for this key (including old ones)
-                            n = await db.deactivate_by_key(*arb_key)
-                            logger.info(
-                                f"SUSPICIOUS ARB (deactivated {n}): {opp.event_title} "
-                                f"ROI={opp.roi_after_fees}% id={opp_id}"
-                            )
-                        else:
-                            current_arb_keys.add(arb_key)
-                            logger.info(
-                                f"ARBITRAGE SAVED: {opp.event_title} "
-                                f"ROI={opp.roi_after_fees}% id={opp_id}"
-                            )
-                            broadcast_event("new_arb", {
-                                "event": opp.event_title,
-                                "roi": opp.roi_after_fees,
-                                "cost": opp.total_cost,
-                            })
+                        logger.info(
+                            f"ARBITRAGE SAVED: {opp.event_title} "
+                            f"ROI={opp.roi_after_fees}% id={opp_id}"
+                        )
+                        broadcast_event("new_arb", {
+                            "event": opp.event_title,
+                            "roi": opp.roi_after_fees,
+                            "cost": opp.total_cost,
+                        })
 
                 # Deactivate stale opportunities not found this scan
                 active_keys = await db.get_active_opp_keys()
@@ -387,6 +409,17 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 broadcast_event("price_update", {
                     "matched_count": len(matched),
                 })
+
+            # Batch commit all DB writes from this scan cycle
+            await db.commit()
+
+            # Periodic cleanup: delete old inactive opportunities every 100 scans
+            _scan_count += 1
+            if _scan_count % 100 == 0:
+                deleted = await db.cleanup_old(days=7)
+                if deleted:
+                    logger.info(f"DB cleanup: removed {deleted} old inactive opportunities")
+                await db.commit()
 
             scan_duration = time.monotonic() - scan_start
             app_state["last_scan_duration"] = round(scan_duration, 1)
