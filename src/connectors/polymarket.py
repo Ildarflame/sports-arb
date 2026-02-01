@@ -153,13 +153,17 @@ class PolymarketConnector(BaseConnector):
         if self._ws:
             await self._ws.close()
 
-    # Additional tag slugs to fetch (esports game markets live under these tags,
-    # not always reachable via the main "sports" tag due to pagination limits).
+    # Additional tag slugs to fetch — game markets under these tags often fall
+    # outside the main "sports" tag pagination window (1000 event limit).
     _EXTRA_TAG_SLUGS = (
-        "counter-strike-2",
-        "league-of-legends",
-        "valorant",
-        "dota-2",
+        # Soccer leagues
+        "premier-league", "la-liga", "bundesliga", "ligue-1", "mls", "soccer",
+        # US sports
+        "nba", "nfl", "nhl",
+        # Other sports with moneyline markets
+        "tennis", "cricket", "ufc", "boxing", "ncaa-basketball",
+        # Esports
+        "counter-strike-2", "league-of-legends", "valorant", "dota-2",
     )
 
     async def fetch_sports_events(self) -> list[Market]:
