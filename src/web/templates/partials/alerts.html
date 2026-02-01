@@ -27,8 +27,9 @@
             <td>{{ "%.1f"|format(opp.total_cost * 100 if opp.total_cost is number else opp.get('total_cost', 0) * 100) }}c</td>
             <td class="arb-positive">
                 +{{ "%.2f"|format(opp.roi_after_fees if opp.roi_after_fees is number else opp.get('roi_after_fees', 0)) }}%
-                {% set details = opp.details if opp.details is mapping else opp.get('details', {}) %}
-                {% if details.get('suspicious') %}
+                {% if opp.details is defined and opp.details is mapping and opp.details.suspicious is defined and opp.details.suspicious %}
+                    <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
+                {% elif opp.roi_after_fees is number and opp.roi_after_fees > 100 %}
                     <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
                 {% endif %}
             </td>
