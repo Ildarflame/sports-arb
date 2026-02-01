@@ -30,6 +30,9 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     pp = normalize_price(poly_market.price, Platform.POLYMARKET)
     kp = normalize_price(kalshi_market.price, Platform.KALSHI)
 
+    poly_url = poly_market.url or ""
+    kalshi_url = kalshi_market.url or ""
+
     # Skip markets with no liquidity (price at 0 or 1)
     MIN_PRICE = 0.01
     MAX_PRICE = 0.99
@@ -76,6 +79,8 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "kalshi_yes_bid": kp.yes_bid,
                     "kalshi_yes_ask": kp.yes_ask,
                     "direction": "YES@Polymarket + NO@Kalshi",
+                    "poly_url": poly_url,
+                    "kalshi_url": kalshi_url,
                 },
             )
 
@@ -108,6 +113,8 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "kalshi_yes": kp.yes_price,
                     "kalshi_no": kp.no_price,
                     "direction": "YES@Kalshi + NO@Polymarket",
+                    "poly_url": poly_url,
+                    "kalshi_url": kalshi_url,
                 },
             )
 

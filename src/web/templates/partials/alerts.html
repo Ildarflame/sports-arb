@@ -13,9 +13,20 @@
     </thead>
     <tbody>
         {% for opp in opportunities %}
+        {% set d = opp.details if opp.details is mapping else (opp.details | from_json if opp.details is string else {}) %}
         <tr>
             <td>
                 <strong>{{ opp.team_a }}</strong> vs <strong>{{ opp.team_b }}</strong>
+                <br>
+                <span style="font-size: 0.7rem;">
+                    {% if d.poly_url %}
+                        <a href="{{ d.poly_url }}" target="_blank" rel="noopener" style="color: #8b5cf6; text-decoration: none;">Poly ↗</a>
+                    {% endif %}
+                    {% if d.poly_url and d.kalshi_url %} · {% endif %}
+                    {% if d.kalshi_url %}
+                        <a href="{{ d.kalshi_url }}" target="_blank" rel="noopener" style="color: #10b981; text-decoration: none;">Kalshi ↗</a>
+                    {% endif %}
+                </span>
             </td>
             <td>
                 <span class="badge badge-arb">
@@ -27,9 +38,7 @@
             <td>{{ "%.1f"|format(opp.total_cost * 100 if opp.total_cost is number else opp.get('total_cost', 0) * 100) }}c</td>
             <td class="arb-positive">
                 +{{ "%.2f"|format(opp.roi_after_fees if opp.roi_after_fees is number else opp.get('roi_after_fees', 0)) }}%
-                {% if opp.details is defined and opp.details is mapping and opp.details.suspicious is defined and opp.details.suspicious %}
-                    <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
-                {% elif opp.roi_after_fees is number and opp.roi_after_fees > 100 %}
+                {% if opp.roi_after_fees is number and opp.roi_after_fees > 100 %}
                     <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
                 {% endif %}
             </td>

@@ -19,9 +19,20 @@
                 {% if event.matched %}
                     <span class="badge badge-arb" style="margin-left: 4px; font-size: 0.6rem;">MATCHED</span>
                 {% endif %}
+                <br>
+                <span style="font-size: 0.7rem;">
+                    {% set pm = event.markets.get(Platform.POLYMARKET) %}
+                    {% set km = event.markets.get(Platform.KALSHI) %}
+                    {% if pm and pm.url %}
+                        <a href="{{ pm.url }}" target="_blank" rel="noopener" style="color: #8b5cf6; text-decoration: none;" title="Open on Polymarket">Poly ↗</a>
+                    {% endif %}
+                    {% if pm and pm.url and km and km.url %} · {% endif %}
+                    {% if km and km.url %}
+                        <a href="{{ km.url }}" target="_blank" rel="noopener" style="color: #10b981; text-decoration: none;" title="Open on Kalshi">Kalshi ↗</a>
+                    {% endif %}
+                </span>
             </td>
             <td>
-                {% set pm = event.markets.get(Platform.POLYMARKET) %}
                 {% if pm and pm.price %}
                     <span class="badge badge-poly">{{ "%.1f"|format(pm.price.yes_price * 100) }}c</span>
                 {% else %}
@@ -36,7 +47,6 @@
                 {% endif %}
             </td>
             <td>
-                {% set km = event.markets.get(Platform.KALSHI) %}
                 {% if km and km.price %}
                     <span class="badge badge-kalshi">{{ "%.1f"|format(km.price.yes_price * 100) }}c</span>
                 {% else %}
