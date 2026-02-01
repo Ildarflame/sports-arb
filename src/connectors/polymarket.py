@@ -73,6 +73,7 @@ _POLY_SPORT_KEYWORDS: dict[str, str] = {
     "mountain west": "ncaa_mb", "american athletic": "ncaa_mb",
     "atlantic 10": "ncaa_mb", "west coast conference": "ncaa_mb",
     "missouri valley": "ncaa_mb", "colonial athletic": "ncaa_mb",
+    "cwbb": "ncaa_wb", "women's college basketball": "ncaa_wb", "wcbb": "ncaa_wb",
     "ncaa": "ncaa_mb",
     # AHL / minor hockey
     "ahl": "nhl",
@@ -159,9 +160,11 @@ class PolymarketConnector(BaseConnector):
         # Soccer leagues
         "premier-league", "la-liga", "bundesliga", "ligue-1", "mls", "soccer",
         # US sports
-        "nba", "nfl", "nhl",
+        "nba", "nfl", "nhl", "mlb",
+        # College
+        "ncaa-basketball", "cwbb", "ncaa-football",
         # Other sports with moneyline markets
-        "tennis", "cricket", "ufc", "boxing", "ncaa-basketball",
+        "tennis", "cricket", "ufc", "boxing", "golf", "pga", "rugby", "f1",
         # Esports
         "counter-strike-2", "league-of-legends", "valorant", "dota-2",
     )
