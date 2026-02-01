@@ -71,9 +71,21 @@ def _filter_and_sort_events(events: list, sport: str = "") -> list:
 
 
 def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
-    """Keep only the latest opportunity per (team_a, platform_buy_yes, platform_buy_no) key."""
+    """Keep only the latest non-suspicious opportunity per (team_a, platform_buy_yes, platform_buy_no) key."""
     seen: dict[tuple, dict] = {}
     for opp in opportunities:
+        # Filter out suspicious opportunities
+        details = opp.get("details")
+        if isinstance(details, dict) and details.get("suspicious"):
+            continue
+        if isinstance(details, str):
+            try:
+                d = json.loads(details)
+                if d.get("suspicious"):
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         key = (opp.get("team_a", ""), opp.get("platform_buy_yes", ""), opp.get("platform_buy_no", ""))
         if key not in seen:
             seen[key] = opp

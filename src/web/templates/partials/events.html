@@ -70,18 +70,28 @@
             </td>
             <td>
                 {% if event.matched and pm and pm.price and km and km.price %}
-                    {# Direction 1: YES@Poly + NO@Kalshi #}
-                    {% set cost1 = pm.price.yes_price + km.price.no_price %}
-                    {% set fee1 = pm.price.yes_price * 0.02 + km.price.no_price * 0.015 %}
+                    {# Direction 1: YES@Poly + NO@Kalshi — use executable prices #}
+                    {% set py_exec = pm.price.yes_ask if pm.price.yes_ask else pm.price.yes_price %}
+                    {% set kn_exec = (1.0 - km.price.yes_bid) if km.price.yes_bid else km.price.no_price %}
+                    {% set cost1 = py_exec + kn_exec %}
+                    {% set fee1 = py_exec * 0.02 + kn_exec * 0.015 %}
                     {% set roi1 = ((1.0 - cost1 - fee1) / (cost1 + fee1) * 100) if cost1 + fee1 > 0 else -100 %}
-                    {# Direction 2: YES@Kalshi + NO@Poly #}
-                    {% set cost2 = km.price.yes_price + pm.price.no_price %}
-                    {% set fee2 = km.price.yes_price * 0.015 + pm.price.no_price * 0.02 %}
+                    {# Direction 2: YES@Kalshi + NO@Poly — use executable prices #}
+                    {% set ky_exec = km.price.yes_ask if km.price.yes_ask else km.price.yes_price %}
+                    {% set pn_exec = (1.0 - pm.price.yes_bid) if pm.price.yes_bid else pm.price.no_price %}
+                    {% set cost2 = ky_exec + pn_exec %}
+                    {% set fee2 = ky_exec * 0.015 + pn_exec * 0.02 %}
                     {% set roi2 = ((1.0 - cost2 - fee2) / (cost2 + fee2) * 100) if cost2 + fee2 > 0 else -100 %}
                     {% set best_roi = [roi1, roi2]|max %}
+                    {% set has_exec = (pm.price.yes_ask or pm.price.yes_bid) and (km.price.yes_ask or km.price.yes_bid) %}
                     <span class="{{ 'arb-positive' if best_roi > 0 else 'arb-negative' }}">
                         {{ "%+.1f"|format(best_roi) }}%
                     </span>
+                    {% if has_exec %}
+                        <span style="color:#10b981;font-size:0.6rem" title="Calculated from bid/ask prices">EXEC</span>
+                    {% else %}
+                        <span style="color:#ff6b6b;font-size:0.6rem" title="Midpoint estimate only">MID</span>
+                    {% endif %}
                 {% elif not event.matched %}
                     <span style="color: var(--text-dim); font-size: 0.75rem;">Kalshi only</span>
                 {% else %}

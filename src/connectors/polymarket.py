@@ -26,30 +26,83 @@ _POLY_SPORT_KEYWORDS: dict[str, str] = {
     "bundesliga": "soccer", "serie a": "soccer", "ligue 1": "soccer",
     "champions league": "soccer", "saudi pro": "soccer", "ekstraklasa": "soccer",
     "süper lig": "soccer", "super lig": "soccer", "belgian pro": "soccer",
-    "fifa": "soccer", "world cup": "soccer", "mls": "soccer",
+    "fifa": "soccer", "fifa world cup": "soccer", "men's world cup": "soccer",
+    "women's world cup": "soccer", "mls": "soccer",
     "ufc": "mma", "mma": "mma",
     "atp": "tennis", "wta": "tennis", "grand slam": "tennis",
     "french open": "tennis", "wimbledon": "tennis", "us open tennis": "tennis",
     "australian open": "tennis",
     "cricket": "cricket", "icc": "cricket", "ipl": "cricket", "test match": "cricket",
     "t20": "cricket", "ashes": "cricket",
+    # Compound cricket keywords (longer than "world cup" so they win in sorted order)
+    "icc men's t20 world cup": "cricket", "icc women's t20 world cup": "cricket",
+    "t20 world cup": "cricket", "icc world cup": "cricket",
+    "icc men's": "cricket", "icc women's": "cricket",
+    "cricket world cup": "cricket",
     "copa": "soccer", "europa league": "soccer", "carabao": "soccer",
     "fa cup": "soccer", "eredivisie": "soccer", "liga mx": "soccer", "j-league": "soccer",
+    "efl": "soccer", "league one": "soccer", "league two": "soccer",
+    "championship": "soccer",  # EFL Championship
+    # Rugby
+    "top 14": "rugby", "rugby": "rugby", "six nations": "rugby",
+    "premiership rugby": "rugby", "united rugby": "rugby",
     "pga": "golf", "lpga": "golf", "masters": "golf",
-    "f1": "motorsport", "formula": "motorsport", "nascar": "motorsport",
+    "f1": "motorsport", "formula": "motorsport", "nascar": "motorsport", "indycar": "motorsport",
+    "chess": "chess",
+    "boxing": "boxing", "fight night": "boxing",
+    "pickleball": "pickleball",
+    "table tennis": "table_tennis", "ping pong": "table_tennis",
+    "tgl": "golf", "dp world": "golf",
+    "swiss super league": "soccer", "swiss league": "soccer",
     "cs2": "esports", "lol": "esports", "valorant": "esports", "dota": "esports",
     "league of legends": "esports",
+    # Olympics
+    "winter olympics": "olympics", "summer olympics": "olympics", "olympic": "olympics",
+    # Futures-specific keywords (Fix 5)
+    "nba finals": "nba", "nba champion": "nba", "nba mvp": "nba",
+    "nba eastern": "nba", "nba western": "nba", "nba rookie": "nba",
+    "nba defensive": "nba",
+    "super bowl": "nfl", "nfl mvp": "nfl",
+    "stanley cup": "nhl", "nhl champion": "nhl",
+    "world series": "mlb", "mlb mvp": "mlb",
+    "heisman": "ncaa_fb", "march madness": "ncaa_mb",
+    # College conferences → ncaa_mb
+    "acc ": "ncaa_mb", "big 10": "ncaa_mb", "big ten": "ncaa_mb",
+    "big 12": "ncaa_mb", "big twelve": "ncaa_mb", "big east": "ncaa_mb",
+    "sec ": "ncaa_mb", "pac-12": "ncaa_mb", "pac 12": "ncaa_mb",
+    "mountain west": "ncaa_mb", "american athletic": "ncaa_mb",
+    "atlantic 10": "ncaa_mb", "west coast conference": "ncaa_mb",
+    "missouri valley": "ncaa_mb", "colonial athletic": "ncaa_mb",
+    "ncaa": "ncaa_mb",
+    # AHL / minor hockey
+    "ahl": "nhl",
 }
+
+# Pre-sorted keywords: longer (more specific) first to avoid false matches
+# e.g. "icc" and "t20" must match before "world cup"
+_POLY_SPORT_KEYWORDS_SORTED: list[tuple[str, str]] = sorted(
+    _POLY_SPORT_KEYWORDS.items(), key=lambda x: -len(x[0])
+)
 
 
 def _detect_sport_poly(event_title: str, tags: list[str] | None = None) -> str:
-    """Detect sport from Polymarket event title and tags."""
+    """Detect sport from Polymarket event title and tags.
+
+    Uses keywords sorted by length descending so specific terms like "icc",
+    "t20", "nba finals" match before generic ones like "world cup".
+    Falls back to heuristics for club name suffixes and college patterns.
+    """
     text = event_title.lower()
     if tags:
         text += " " + " ".join(t.lower() for t in tags)
-    for keyword, sport in _POLY_SPORT_KEYWORDS.items():
+    for keyword, sport in _POLY_SPORT_KEYWORDS_SORTED:
         if keyword in text:
             return sport
+
+    # Fallback: soccer club suffixes in title
+    if re.search(r"\b(fc|sc|afc|cf)\b", text):
+        return "soccer"
+
     return ""
 
 
@@ -195,6 +248,31 @@ class PolymarketConnector(BaseConnector):
                             if not team_name:
                                 continue
 
+                            # Parse opponent (team_b) from event_title "X vs Y"
+                            team_b_neg = ""
+                            if event_title:
+                                ev_a, ev_b = self._parse_vs_teams(event_title)
+                                if ev_a and ev_b:
+                                    # Figure out which side this sub-market is
+                                    tn_lower = team_name.lower()
+                                    if tn_lower in ev_a.lower() or ev_a.lower() in tn_lower:
+                                        team_b_neg = ev_b
+                                    elif tn_lower in ev_b.lower() or ev_b.lower() in tn_lower:
+                                        team_b_neg = ev_a
+                                    else:
+                                        # fuzzy fallback
+                                        from rapidfuzz import fuzz as _fuzz
+                                        if _fuzz.ratio(tn_lower, ev_a.lower()) > _fuzz.ratio(tn_lower, ev_b.lower()):
+                                            team_b_neg = ev_b
+                                        else:
+                                            team_b_neg = ev_a
+
+                            # Try harder to get game_date for negRisk game markets
+                            if mtype == "game" and not game_date:
+                                game_date = _parse_game_date_from_iso(
+                                    m.get("endDate") or event.get("endDate")
+                                )
+
                             price = self._build_price(prices)
                             markets.append(Market(
                                 platform=Platform.POLYMARKET,
@@ -202,7 +280,7 @@ class PolymarketConnector(BaseConnector):
                                 event_id=event_id,
                                 title=question,
                                 team_a=team_name,
-                                team_b="",
+                                team_b=team_b_neg,
                                 category="sports",
                                 market_type=mtype,
                                 sport=sport,
@@ -223,6 +301,11 @@ class PolymarketConnector(BaseConnector):
                         else:
                             # 2-way market: outcomes are team names
                             # Create one Market per team for cross-platform matching
+                            # Parse team_b from event_title "Team A vs. Team B" pattern
+                            other_team = {0: "", 1: ""}
+                            if len(outcomes) == 2:
+                                other_team = {0: outcomes[1], 1: outcomes[0]}
+
                             for i, team_name in enumerate(outcomes):
                                 if not team_name or len(team_name) < 2:
                                     continue
@@ -247,7 +330,7 @@ class PolymarketConnector(BaseConnector):
                                     event_id=event_id,
                                     title=f"Will {team_name} win? ({event_title})",
                                     team_a=team_name,
-                                    team_b="",
+                                    team_b=other_team.get(i, ""),
                                     category="sports",
                                     market_type=mtype,
                                     sport=sport,
@@ -278,6 +361,22 @@ class PolymarketConnector(BaseConnector):
         except Exception:
             logger.exception("Error fetching Polymarket sports events")
         return markets
+
+    @staticmethod
+    def _parse_vs_teams(title: str) -> tuple[str, str]:
+        """Extract two team names from 'Team A vs. Team B' or 'Team A vs Team B'."""
+        for sep in (" vs. ", " vs ", " v. ", " v "):
+            if sep in title:
+                idx = title.index(sep)
+                a = title[:idx].strip()
+                b = title[idx + len(sep):].strip()
+                # Remove trailing punctuation/metadata
+                for suffix in ("?", " Winner", " Game", " Match"):
+                    b = b.removesuffix(suffix).strip()
+                    a = a.removesuffix(suffix).strip()
+                if a and b:
+                    return a, b
+        return "", ""
 
     @staticmethod
     def _parse_json_field(value) -> list:

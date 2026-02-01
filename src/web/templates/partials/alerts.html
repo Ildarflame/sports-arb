@@ -41,6 +41,11 @@
                 {% if opp.roi_after_fees is number and opp.roi_after_fees > 100 %}
                     <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
                 {% endif %}
+                {% if d.executable %}
+                    <span style="color:#10b981;font-size:0.6rem" title="Calculated from bid/ask executable prices">EXEC</span>
+                {% else %}
+                    <span style="color:#ff6b6b;font-size:0.6rem" title="Midpoint estimate — real cost may differ">MID</span>
+                {% endif %}
             </td>
             <td style="color: var(--text-dim); font-size: 0.75rem;">
                 {{ opp.found_at if opp.found_at is string else opp.get('found_at', '') }}

@@ -165,6 +165,19 @@ class Database:
         )
         await self._db.commit()
 
+    async def deactivate_by_key(
+        self, team_a: str, platform_yes: str, platform_no: str,
+    ) -> int:
+        """Deactivate ALL active opportunities matching the given key."""
+        cursor = await self._db.execute(
+            """UPDATE opportunities SET still_active = 0
+               WHERE still_active = 1
+                 AND team_a = ? AND platform_buy_yes = ? AND platform_buy_no = ?""",
+            (team_a, platform_yes, platform_no),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     async def save_price_snapshot(
         self, event_id: str, platform: str, market_id: str,
         yes_price: float, no_price: float,

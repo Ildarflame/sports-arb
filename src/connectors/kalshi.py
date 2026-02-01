@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import logging
 import re
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from src.config import settings
 from src.connectors.base import BaseConnector
@@ -28,7 +33,11 @@ _KALSHI_SPORT_MAP: dict[str, str] = {
     "KXFOPENMENSINGLE": "tennis", "KXWIMBLEDONMENSINGLE": "tennis",
     "KXAUSOPENMENSINGLE": "tennis", "KXUSOPENMENSINGLE": "tennis",
     "KXCS2": "esports", "KXLOL": "esports", "KXVALORANT": "esports", "KXDOTA2": "esports",
-    "KXCRICKET": "cricket", "KXIPL": "cricket", "KXICC": "cricket",
+    "KXCRICKET": "cricket", "KXIPL": "cricket", "KXICC": "cricket", "KXCRICKETT20IMATCH": "cricket",
+    "KXPGATOUR": "golf", "KXLPGATOUR": "golf", "KXDPWORLDTOUR": "golf", "KXTGLMATCH": "golf",
+    "KXSWISSLEAGUE": "soccer",
+    "KXF1": "motorsport",
+    "KXTABLETENNIS": "table_tennis",
 }
 
 
@@ -42,8 +51,8 @@ def _detect_sport_kalshi(event_ticker: str) -> str:
 
 
 def _parse_date_from_kalshi_ticker(event_ticker: str) -> date | None:
-    """Parse date from Kalshi event ticker like KXNBAGAME-26FEB01-..."""
-    m = re.search(r"-(\d{2})([A-Z]{3})(\d{2})-", event_ticker.upper())
+    """Parse date from Kalshi event ticker like KXNBAGAME-26FEB01AVLBRE or KXNBAGAME-26FEB01-..."""
+    m = re.search(r"-(\d{2})([A-Z]{3})(\d{2})", event_ticker.upper())
     if m:
         year_2 = m.group(1)
         month_str = m.group(2)
@@ -96,6 +105,10 @@ GAME_TICKER_PREFIXES = (
     "KXUFCGAME", "KXUFCMATCH",  # MMA
     "KXATPMATCH", "KXATPCHALLENGERMATCH", "KXWTAMATCH",  # Tennis
     "KXCS2GAME", "KXLOLGAME", "KXVALORANTGAME", "KXDOTA2GAME",  # Esports
+    "KXTGLMATCH",  # Golf (TGL match play)
+    "KXSWISSLEAGUEGAME",  # Soccer (Swiss Super League)
+    "KXTABLETENNIS",  # Table Tennis
+    "KXCRICKETT20IMATCH",  # Cricket T20I
     # Championship/futures markets (matchable with Polymarket)
     "KXNCAAF-", "KXNCAAFFINALIST",  # College football championship
     "KXHEISMAN",  # Heisman
@@ -106,35 +119,54 @@ GAME_TICKER_PREFIXES = (
 class KalshiConnector(BaseConnector):
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None
-        self._token: str = ""
+        self._private_key = None
+        self._api_key_id: str = ""
 
     async def connect(self) -> None:
         self._http = httpx.AsyncClient(
             base_url=settings.kalshi_api_base,
             timeout=30,
         )
-        if settings.kalshi_email and settings.kalshi_password:
-            await self._authenticate()
+        if settings.kalshi_api_key_id and settings.kalshi_private_key_path:
+            self._load_rsa_key()
         else:
-            logger.warning("Kalshi credentials not set — running without auth")
+            logger.warning("Kalshi RSA credentials not set — running without auth")
 
-    async def _authenticate(self) -> None:
+    def _load_rsa_key(self) -> None:
+        """Load RSA private key for API authentication."""
         try:
-            resp = await self._http.post(
-                "/log-in",
-                json={
-                    "email": settings.kalshi_email,
-                    "password": settings.kalshi_password,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            self._token = data.get("token", "")
-            if self._token:
-                self._http.headers["Authorization"] = f"Bearer {self._token}"
-                logger.info("Kalshi: authenticated successfully")
+            key_path = Path(settings.kalshi_private_key_path)
+            if not key_path.is_absolute():
+                # Resolve relative to project root
+                key_path = Path(__file__).resolve().parent.parent.parent / key_path
+            pem_data = key_path.read_bytes()
+            self._private_key = serialization.load_pem_private_key(pem_data, password=None)
+            self._api_key_id = settings.kalshi_api_key_id
+            logger.info("Kalshi: RSA key loaded, authenticated requests enabled")
         except Exception:
-            logger.exception("Kalshi authentication failed")
+            logger.exception("Kalshi: failed to load RSA key")
+
+    def _sign_request(self, method: str, path: str) -> dict[str, str]:
+        """Generate Kalshi auth headers with RSA-PSS signature."""
+        if not self._private_key:
+            return {}
+        timestamp = str(int(datetime.now(UTC).timestamp() * 1000))
+        # Strip query params for signing
+        path_clean = path.split("?")[0]
+        message = f"{timestamp}{method.upper()}{path_clean}".encode()
+        signature = self._private_key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH,
+            ),
+            hashes.SHA256(),
+        )
+        return {
+            "KALSHI-ACCESS-KEY": self._api_key_id,
+            "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode(),
+            "KALSHI-ACCESS-TIMESTAMP": timestamp,
+        }
 
     async def disconnect(self) -> None:
         if self._http:
@@ -169,6 +201,10 @@ class KalshiConnector(BaseConnector):
         "KXAUSOPENMENSINGLE", "KXUSOPENMENSINGLE",
         # MMA
         "KXUFCCHAMP",
+        # Golf
+        "KXPGATOUR", "KXLPGATOUR", "KXDPWORLDTOUR",
+        # Motorsport
+        "KXF1",
     )
 
     # Daily game series tickers (fetched via /events endpoint)
@@ -191,16 +227,48 @@ class KalshiConnector(BaseConnector):
         "KXATPMATCH", "KXATPCHALLENGERMATCH", "KXWTAMATCH",
         # Esports
         "KXCS2GAME", "KXLOLGAME", "KXVALORANTGAME", "KXDOTA2GAME",
+        # Golf (TGL match play)
+        "KXTGLMATCH",
+        # Soccer (Swiss Super League)
+        "KXSWISSLEAGUEGAME",
+        # Table Tennis
+        "KXTABLETENNIS",
+        # Cricket T20I
+        "KXCRICKETT20IMATCH",
     )
+
+    async def _request_with_retry(
+        self, method: str, path: str, *, params: dict | None = None, max_retries: int = 2,
+    ) -> httpx.Response:
+        """Make an HTTP request with retry on 429 (rate limit).
+
+        Includes RSA-PSS auth headers if credentials are configured.
+        """
+        for attempt in range(max_retries + 1):
+            # Build full path for signing (including query params)
+            req = self._http.build_request(method, path, params=params)
+            full_path = req.url.raw_path.decode()
+            auth_headers = self._sign_request(method, full_path)
+
+            resp = await self._http.request(method, path, params=params, headers=auth_headers)
+            if resp.status_code == 429:
+                wait = 2 * (attempt + 1)
+                logger.warning(f"Kalshi 429 on {path}, retry {attempt+1}/{max_retries} after {wait}s")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp
+        # Final attempt got 429 — raise it
+        resp.raise_for_status()
+        return resp  # unreachable but keeps type checker happy
 
     async def _fetch_markets_for_event(self, event_ticker: str) -> list[dict]:
         """Fetch all markets for a specific event ticker."""
         try:
-            resp = await self._http.get(
-                "/markets",
+            resp = await self._request_with_retry(
+                "GET", "/markets",
                 params={"event_ticker": event_ticker, "status": "open", "limit": 200},
             )
-            resp.raise_for_status()
             return resp.json().get("markets", [])
         except Exception:
             logger.warning(f"Failed to fetch markets for {event_ticker}")
@@ -228,8 +296,7 @@ class KalshiConnector(BaseConnector):
                 if cursor:
                     params["cursor"] = cursor
 
-                resp = await self._http.get("/markets", params=params)
-                resp.raise_for_status()
+                resp = await self._request_with_retry("GET", "/markets", params=params)
                 data = resp.json()
 
                 for m in data.get("markets", []):
@@ -258,6 +325,18 @@ class KalshiConnector(BaseConnector):
                     if not team_a:
                         logger.debug(f"Kalshi: skipping market (no team): {title[:80]}")
                         continue
+
+                    # Try to fill team_b from "X vs Y" in title if still empty
+                    if not team_b:
+                        _, extracted_b = self._extract_both_teams_from_title(title)
+                        if extracted_b:
+                            team_b = extracted_b
+
+                    # Align team_a = YES team using ticker suffix
+                    if team_b:
+                        team_a, team_b = self._align_yes_team(
+                            team_a, team_b, ticker, event_ticker,
+                        )
 
                     # Determine which team this specific market is for
                     # Kalshi has separate markets per outcome (TOT, MCI, TIE)
@@ -313,6 +392,8 @@ class KalshiConnector(BaseConnector):
                             no_price=round(1 - mid, 4),
                             yes_bid=yb or None,
                             yes_ask=ya or None,
+                            no_bid=round(1 - ya, 4) if ya else None,
+                            no_ask=round(1 - yb, 4) if yb else None,
                             volume=m.get("volume", 0),
                             last_updated=datetime.now(UTC),
                         )
@@ -345,6 +426,7 @@ class KalshiConnector(BaseConnector):
             # Strategy 3: Fetch championship/futures events from known series
             for series_ticker in self.FUTURES_SERIES_TICKERS:
                 try:
+                    await asyncio.sleep(0.3)  # Rate limit: pause between series
                     evt_cursor = ""
                     for _ in range(5):  # Max 5 pages per series
                         params = {
@@ -355,8 +437,7 @@ class KalshiConnector(BaseConnector):
                         }
                         if evt_cursor:
                             params["cursor"] = evt_cursor
-                        resp = await self._http.get("/events", params=params)
-                        resp.raise_for_status()
+                        resp = await self._request_with_retry("GET", "/events", params=params)
                         events_data = resp.json()
                         for evt in events_data.get("events", []):
                             for m in evt.get("markets", []):
@@ -378,6 +459,7 @@ class KalshiConnector(BaseConnector):
             # Strategy 4: Fetch daily game events from known game series
             for series_ticker in self.GAME_SERIES_TICKERS:
                 try:
+                    await asyncio.sleep(0.3)  # Rate limit: pause between series
                     evt_cursor = ""
                     for _ in range(3):  # Max 3 pages per game series
                         params = {
@@ -388,10 +470,10 @@ class KalshiConnector(BaseConnector):
                         }
                         if evt_cursor:
                             params["cursor"] = evt_cursor
-                        resp = await self._http.get("/events", params=params)
-                        resp.raise_for_status()
+                        resp = await self._request_with_retry("GET", "/events", params=params)
                         events_data = resp.json()
                         for evt in events_data.get("events", []):
+                            evt_parsed: list[Market] = []
                             for m in evt.get("markets", []):
                                 ticker = m.get("ticker", "")
                                 if ticker in seen_tickers:
@@ -399,7 +481,18 @@ class KalshiConnector(BaseConnector):
                                 parsed = self._parse_market(m, market_type="game")
                                 if parsed:
                                     seen_tickers.add(ticker)
-                                    markets.append(parsed)
+                                    evt_parsed.append(parsed)
+                            # Cross-reference team_b from sibling markets
+                            # In a 2-market event (A wins / B wins), set team_b of A = team_a of B
+                            # Only when team_a differs (same title = same team_a, skip)
+                            if len(evt_parsed) == 2:
+                                a, b = evt_parsed
+                                if a.team_a.lower() != b.team_a.lower():
+                                    if not a.team_b or len(a.team_b.split()) == 1:
+                                        a.team_b = b.team_a
+                                    if not b.team_b or len(b.team_b.split()) == 1:
+                                        b.team_b = a.team_a
+                            markets.extend(evt_parsed)
                         evt_cursor = events_data.get("cursor", "")
                         if not evt_cursor or not events_data.get("events"):
                             break
@@ -436,6 +529,18 @@ class KalshiConnector(BaseConnector):
                 team_b = ""
         if not team_a:
             return None
+
+        # Try to fill team_b from "X vs Y" in title if still empty
+        if not team_b:
+            _, extracted_b = self._extract_both_teams_from_title(title)
+            if extracted_b:
+                team_b = extracted_b
+
+        # Align team_a = YES team using ticker suffix
+        if team_b:
+            team_a, team_b = self._align_yes_team(
+                team_a, team_b, ticker, event_ticker,
+            )
 
         no_sub = m.get("no_sub_title", "")
         rules = m.get("rules_primary", "")
@@ -493,6 +598,8 @@ class KalshiConnector(BaseConnector):
                 no_price=round(1 - mid, 4),
                 yes_bid=yb or None,
                 yes_ask=ya or None,
+                no_bid=round(1 - ya, 4) if ya else None,
+                no_ask=round(1 - yb, 4) if yb else None,
                 volume=m.get("volume", 0),
                 last_updated=datetime.now(UTC),
             )
@@ -502,7 +609,9 @@ class KalshiConnector(BaseConnector):
     async def fetch_price(self, market_id: str) -> MarketPrice | None:
         """Fetch price for a single Kalshi market."""
         try:
-            resp = await self._http.get(f"/markets/{market_id}")
+            path = f"/markets/{market_id}"
+            auth_headers = self._sign_request("GET", path)
+            resp = await self._http.get(path, headers=auth_headers)
             resp.raise_for_status()
             data = resp.json().get("market", resp.json())
 
@@ -534,9 +643,44 @@ class KalshiConnector(BaseConnector):
             return None
 
     @staticmethod
+    def _align_yes_team(
+        team_a: str, team_b: str, ticker: str, event_ticker: str,
+    ) -> tuple[str, str]:
+        """Ensure team_a is the YES team based on ticker suffix.
+
+        Kalshi market tickers encode the YES team as a suffix:
+          event_ticker: KXEPLGAME-26FEB01AVLBRE
+          market ticker: KXEPLGAME-26FEB01AVLBRE-BRE  (YES=Brentford)
+        The event ticker's team portion (AVLBRE) concatenates both team codes
+        in title order. If the suffix matches the second code, team_b is YES
+        and we swap team_a/team_b so that team_a always = YES team.
+        """
+        if not team_a or not team_b or not ticker or not event_ticker:
+            return team_a, team_b
+
+        parts = ticker.split("-")
+        if len(parts) < 2:
+            return team_a, team_b
+        suffix = parts[-1].upper()
+        if suffix in ("TIE", "DRAW"):
+            return team_a, team_b
+
+        # Extract team codes from event ticker (everything after date digits)
+        m = re.search(r"-\d{2}[A-Z]{3}\d{2}(.+)$", event_ticker.upper())
+        if not m:
+            return team_a, team_b
+        teams_concat = m.group(1)
+
+        if teams_concat.endswith(suffix) and not teams_concat.startswith(suffix):
+            # Suffix is the second team code → maps to team_b in title → swap
+            return team_b, team_a
+        # Suffix is the first team code or ambiguous → keep as-is
+        return team_a, team_b
+
+    @staticmethod
     def _parse_teams(title: str) -> tuple[str, str]:
-        """Extract two team names from 'Team A vs Team B Winner?' style title."""
-        for sep in (" vs. ", " vs ", " v. ", " v "):
+        """Extract two team names from 'Team A vs Team B Winner?' or 'Team A at Team B Winner?' style title."""
+        for sep in (" vs. ", " vs ", " v. ", " v ", " at "):
             if sep in title:
                 idx = title.index(sep)
                 a = title[:idx].strip()
@@ -572,6 +716,31 @@ class KalshiConnector(BaseConnector):
             if len(name) > 2:
                 return name
         return ""
+
+    @staticmethod
+    def _extract_both_teams_from_title(title: str) -> tuple[str, str]:
+        """Extract both teams from title containing 'X vs Y' or 'X vs. Y'.
+
+        Handles patterns like:
+          "Will X win the X vs Y : Round match?"
+          "Will X win the X vs. Y match?"
+          "X vs Y Winner?"
+        Returns (team_a, team_b) or ("", "") if no match.
+        """
+        # Look for "vs" / "vs." / "at" inside the title
+        m = re.search(r"([\w\s\.\-']+?)\s+(?:vs\.?|at)\s+([\w\s\.\-']+?)(?:\s*[:\?]|\s+(?:Winner|Game|Match|Round)|\s*$)", title, re.IGNORECASE)
+        if m:
+            a = m.group(1).strip()
+            b = m.group(2).strip()
+            # Clean up: remove leading "the"
+            for prefix in ("the ", "The "):
+                if a.startswith(prefix):
+                    a = a[len(prefix):]
+                if b.startswith(prefix):
+                    b = b[len(prefix):]
+            if len(a) > 1 and len(b) > 1:
+                return a, b
+        return "", ""
 
     @staticmethod
     def _extract_team_from_rules(rules: str) -> str:

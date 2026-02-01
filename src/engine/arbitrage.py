@@ -5,9 +5,29 @@ from datetime import UTC, datetime
 
 from src.config import settings
 from src.engine.normalizer import FEES, normalize_price
-from src.models import ArbitrageOpportunity, Platform, SportEvent
+from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _exec_buy_price(price: MarketPrice, side: str) -> float:
+    """Executable price for buying YES or NO side.
+
+    Buy YES → pay yes_ask (worst case for buyer).
+    Buy NO  → pay 1 - yes_bid = no_ask (worst case for buyer).
+    Falls back to midpoint if bid/ask not available.
+    """
+    if side == "yes":
+        if price.yes_ask and price.yes_ask > 0:
+            return price.yes_ask
+        return price.yes_price
+    else:
+        # Buy NO = pay 1 - yes_bid (= no_ask)
+        if price.yes_bid and price.yes_bid > 0:
+            return round(1.0 - price.yes_bid, 4)
+        if price.no_ask and price.no_ask > 0:
+            return price.no_ask
+        return price.no_price
 
 
 def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
@@ -57,13 +77,25 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     best_opp: ArbitrageOpportunity | None = None
     best_roi = 0.0
 
+    # Executable prices (bid/ask) for accurate cost calculation
+    poly_yes_exec = _exec_buy_price(pp, "yes")
+    poly_no_exec = _exec_buy_price(pp, "no")
+    kalshi_yes_exec = _exec_buy_price(kp, "yes")
+    kalshi_no_exec = _exec_buy_price(kp, "no")
+
+    # Determine if we have real bid/ask data (not just midpoint)
+    has_exec_d1 = bool(pp.yes_ask and kp.yes_bid)
+    has_exec_d2 = bool(kp.yes_ask and pp.yes_bid)
+
     # Direction 1: Buy YES on Polymarket, buy NO on Kalshi
-    cost_1 = pp.yes_price + kp.no_price
+    midpoint_cost_1 = pp.yes_price + kp.no_price
+    exec_cost_1 = poly_yes_exec + kalshi_no_exec
+    cost_1 = exec_cost_1
     if cost_1 < 1.0:
         gross_profit = 1.0 - cost_1
         # Apply fees
-        fee_poly = pp.yes_price * FEES[Platform.POLYMARKET]
-        fee_kalshi = kp.no_price * FEES[Platform.KALSHI]
+        fee_poly = poly_yes_exec * FEES[Platform.POLYMARKET]
+        fee_kalshi = kalshi_no_exec * FEES[Platform.KALSHI]
         net_profit = gross_profit - fee_poly - fee_kalshi
         net_cost = cost_1 + fee_poly + fee_kalshi
         roi = (net_profit / net_cost) * 100 if net_cost > 0 else 0
@@ -76,8 +108,8 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                 team_b=event.team_b,
                 platform_buy_yes=Platform.POLYMARKET,
                 platform_buy_no=Platform.KALSHI,
-                yes_price=pp.yes_price,
-                no_price=kp.no_price,
+                yes_price=poly_yes_exec,
+                no_price=kalshi_no_exec,
                 total_cost=round(net_cost, 4),
                 profit_pct=round(gross_profit * 100, 2),
                 roi_after_fees=round(roi, 2),
@@ -97,15 +129,20 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_volume": poly_vol,
                     "kalshi_volume": kalshi_vol,
                     "spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+                    "midpoint_cost": round(midpoint_cost_1, 4),
+                    "exec_cost": round(exec_cost_1, 4),
+                    "executable": has_exec_d1,
                 },
             )
 
     # Direction 2: Buy YES on Kalshi, buy NO on Polymarket
-    cost_2 = kp.yes_price + pp.no_price
+    midpoint_cost_2 = kp.yes_price + pp.no_price
+    exec_cost_2 = kalshi_yes_exec + poly_no_exec
+    cost_2 = exec_cost_2
     if cost_2 < 1.0:
         gross_profit = 1.0 - cost_2
-        fee_kalshi = kp.yes_price * FEES[Platform.KALSHI]
-        fee_poly = pp.no_price * FEES[Platform.POLYMARKET]
+        fee_kalshi = kalshi_yes_exec * FEES[Platform.KALSHI]
+        fee_poly = poly_no_exec * FEES[Platform.POLYMARKET]
         net_profit = gross_profit - fee_kalshi - fee_poly
         net_cost = cost_2 + fee_kalshi + fee_poly
         roi = (net_profit / net_cost) * 100 if net_cost > 0 else 0
@@ -117,8 +154,8 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                 team_b=event.team_b,
                 platform_buy_yes=Platform.KALSHI,
                 platform_buy_no=Platform.POLYMARKET,
-                yes_price=kp.yes_price,
-                no_price=pp.no_price,
+                yes_price=kalshi_yes_exec,
+                no_price=poly_no_exec,
                 total_cost=round(net_cost, 4),
                 profit_pct=round(gross_profit * 100, 2),
                 roi_after_fees=round(roi, 2),
@@ -128,12 +165,19 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_no": pp.no_price,
                     "kalshi_yes": kp.yes_price,
                     "kalshi_no": kp.no_price,
+                    "poly_yes_bid": pp.yes_bid,
+                    "poly_yes_ask": pp.yes_ask,
+                    "kalshi_yes_bid": kp.yes_bid,
+                    "kalshi_yes_ask": kp.yes_ask,
                     "direction": "YES@Kalshi + NO@Polymarket",
                     "poly_url": poly_url,
                     "kalshi_url": kalshi_url,
                     "poly_volume": poly_vol,
                     "kalshi_volume": kalshi_vol,
                     "spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+                    "midpoint_cost": round(midpoint_cost_2, 4),
+                    "exec_cost": round(exec_cost_2, 4),
+                    "executable": has_exec_d2,
                 },
             )
 

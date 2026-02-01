@@ -66,6 +66,12 @@ EVENT_GROUP_ALIASES: dict[str, list[str]] = {
     "us_open_tennis": ["US Open", "KXUSOPENMENSINGLE"],
     # MMA
     "ufc_champ": ["UFC", "KXUFCCHAMP"],
+    # Golf
+    "pga_tour": ["PGA", "PGA Tour", "KXPGATOUR"],
+    "lpga_tour": ["LPGA", "LPGA Tour", "KXLPGATOUR"],
+    "dp_world_tour": ["DP World", "European Tour", "KXDPWORLDTOUR"],
+    # Motorsport
+    "f1_champ": ["F1 Driver", "Formula 1", "Formula One", "KXF1"],
     # Additional soccer
     "fa_cup": ["FA Cup", "KXFACUP"],
     "carabao": ["Carabao Cup", "League Cup", "EFL Cup", "KXCARABAOCUP"],
@@ -97,19 +103,292 @@ def _canonicalize_event_group(event_group: str) -> str:
     return lower  # return as-is if no alias matches
 
 
-def normalize_team_name(name: str) -> str:
-    """Normalize a team name for comparison."""
+# Sport-specific alias lookups: city/nickname → canonical full name
+# Separated by sport to avoid "Seattle" → Seahawks vs Kraken conflicts
+_NBA_ALIASES: dict[str, str] = {
+    "grizzlies": "memphis grizzlies", "memphis": "memphis grizzlies",
+    "lakers": "los angeles lakers", "la lakers": "los angeles lakers",
+    "celtics": "boston celtics", "boston": "boston celtics",
+    "warriors": "golden state warriors", "golden state": "golden state warriors",
+    "thunder": "oklahoma city thunder", "oklahoma city": "oklahoma city thunder", "okc": "oklahoma city thunder",
+    "cavaliers": "cleveland cavaliers", "cavs": "cleveland cavaliers", "cleveland": "cleveland cavaliers",
+    "knicks": "new york knicks", "new york": "new york knicks",
+    "nets": "brooklyn nets", "brooklyn": "brooklyn nets",
+    "76ers": "philadelphia 76ers", "sixers": "philadelphia 76ers", "philadelphia": "philadelphia 76ers",
+    "heat": "miami heat", "miami": "miami heat",
+    "hawks": "atlanta hawks", "atlanta": "atlanta hawks",
+    "bulls": "chicago bulls", "chicago": "chicago bulls",
+    "bucks": "milwaukee bucks", "milwaukee": "milwaukee bucks",
+    "pacers": "indiana pacers", "indiana": "indiana pacers",
+    "pistons": "detroit pistons", "detroit": "detroit pistons",
+    "raptors": "toronto raptors", "toronto": "toronto raptors",
+    "magic": "orlando magic", "orlando": "orlando magic",
+    "wizards": "washington wizards", "washington": "washington wizards",
+    "hornets": "charlotte hornets", "charlotte": "charlotte hornets",
+    "spurs": "san antonio spurs", "san antonio": "san antonio spurs",
+    "mavericks": "dallas mavericks", "mavs": "dallas mavericks", "dallas": "dallas mavericks",
+    "rockets": "houston rockets", "houston": "houston rockets",
+    "nuggets": "denver nuggets", "denver": "denver nuggets",
+    "timberwolves": "minnesota timberwolves", "wolves": "minnesota timberwolves", "minnesota": "minnesota timberwolves",
+    "trail blazers": "portland trail blazers", "blazers": "portland trail blazers", "portland": "portland trail blazers",
+    "jazz": "utah jazz", "utah": "utah jazz",
+    "pelicans": "new orleans pelicans", "new orleans": "new orleans pelicans",
+    "suns": "phoenix suns", "phoenix": "phoenix suns",
+    "kings": "sacramento kings", "sacramento": "sacramento kings",
+    "clippers": "los angeles clippers", "la clippers": "los angeles clippers", "los angeles c": "los angeles clippers",
+}
+_NFL_ALIASES: dict[str, str] = {
+    "chiefs": "kansas city chiefs", "kansas city": "kansas city chiefs",
+    "eagles": "philadelphia eagles", "philadelphia": "philadelphia eagles",
+    "bills": "buffalo bills", "buffalo": "buffalo bills",
+    "ravens": "baltimore ravens", "baltimore": "baltimore ravens",
+    "49ers": "san francisco 49ers", "niners": "san francisco 49ers", "san francisco": "san francisco 49ers",
+    "lions": "detroit lions", "detroit": "detroit lions",
+    "cowboys": "dallas cowboys", "dallas": "dallas cowboys",
+    "packers": "green bay packers", "green bay": "green bay packers",
+    "dolphins": "miami dolphins", "miami": "miami dolphins",
+    "vikings": "minnesota vikings", "minnesota": "minnesota vikings",
+    "chargers": "los angeles chargers", "la chargers": "los angeles chargers",
+    "steelers": "pittsburgh steelers", "pittsburgh": "pittsburgh steelers",
+    "texans": "houston texans", "houston": "houston texans",
+    "bengals": "cincinnati bengals", "cincinnati": "cincinnati bengals",
+    "seahawks": "seattle seahawks", "seattle": "seattle seahawks",
+    "commanders": "washington commanders", "washington": "washington commanders",
+    "broncos": "denver broncos", "denver": "denver broncos",
+    "jaguars": "jacksonville jaguars", "jacksonville": "jacksonville jaguars", "jags": "jacksonville jaguars",
+    "colts": "indianapolis colts", "indianapolis": "indianapolis colts",
+    "falcons": "atlanta falcons", "atlanta": "atlanta falcons",
+    "saints": "new orleans saints", "new orleans": "new orleans saints",
+    "panthers": "carolina panthers", "carolina": "carolina panthers",
+    "cardinals": "arizona cardinals", "arizona": "arizona cardinals",
+    "bears": "chicago bears", "chicago": "chicago bears",
+    "raiders": "las vegas raiders", "las vegas": "las vegas raiders",
+    "patriots": "new england patriots", "new england": "new england patriots",
+    "giants": "new york giants",
+    "jets": "new york jets",
+    "titans": "tennessee titans", "tennessee": "tennessee titans",
+    "browns": "cleveland browns",
+    "rams": "los angeles rams", "la rams": "los angeles rams",
+    "buccaneers": "tampa bay buccaneers", "bucs": "tampa bay buccaneers", "tampa bay": "tampa bay buccaneers",
+}
+_NHL_ALIASES: dict[str, str] = {
+    "bruins": "boston bruins", "boston": "boston bruins",
+    "lightning": "tampa bay lightning", "tampa bay": "tampa bay lightning",
+    "maple leafs": "toronto maple leafs", "leafs": "toronto maple leafs", "toronto": "toronto maple leafs",
+    "panthers": "florida panthers", "florida": "florida panthers",
+    "rangers": "new york rangers", "new york": "new york rangers",
+    "hurricanes": "carolina hurricanes", "carolina": "carolina hurricanes",
+    "oilers": "edmonton oilers", "edmonton": "edmonton oilers",
+    "avalanche": "colorado avalanche", "colorado": "colorado avalanche",
+    "stars": "dallas stars", "dallas": "dallas stars",
+    "flames": "calgary flames", "calgary": "calgary flames",
+    "jets": "winnipeg jets", "winnipeg": "winnipeg jets",
+    "wild": "minnesota wild", "minnesota": "minnesota wild",
+    "capitals": "washington capitals", "caps": "washington capitals", "washington": "washington capitals",
+    "red wings": "detroit red wings", "detroit": "detroit red wings",
+    "penguins": "pittsburgh penguins", "pens": "pittsburgh penguins", "pittsburgh": "pittsburgh penguins",
+    "blues": "st. louis blues", "st louis": "st. louis blues", "st. louis": "st. louis blues",
+    "canucks": "vancouver canucks", "vancouver": "vancouver canucks",
+    "islanders": "new york islanders",
+    "predators": "nashville predators", "preds": "nashville predators", "nashville": "nashville predators",
+    "senators": "ottawa senators", "sens": "ottawa senators", "ottawa": "ottawa senators",
+    "blackhawks": "chicago blackhawks", "chicago": "chicago blackhawks",
+    "golden knights": "vegas golden knights", "vegas": "vegas golden knights",
+    "kraken": "seattle kraken", "seattle": "seattle kraken",
+    "ducks": "anaheim ducks", "anaheim": "anaheim ducks",
+    "blue jackets": "columbus blue jackets", "columbus": "columbus blue jackets",
+    "utah hockey club": "utah hockey club", "coyotes": "utah hockey club",
+    "sabres": "buffalo sabres", "buffalo": "buffalo sabres",
+    "devils": "new jersey devils", "new jersey": "new jersey devils",
+    "flyers": "philadelphia flyers", "philadelphia": "philadelphia flyers",
+    "canadiens": "montreal canadiens", "habs": "montreal canadiens", "montreal": "montreal canadiens",
+    "sharks": "san jose sharks", "san jose": "san jose sharks",
+}
+
+# Sport-specific alias map
+_SPORT_ALIASES: dict[str, dict[str, str]] = {
+    "nba": _NBA_ALIASES,
+    "nfl": _NFL_ALIASES,
+    "ncaa_fb": _NFL_ALIASES,  # College uses similar names
+    "nhl": _NHL_ALIASES,
+}
+
+# Fallback aliases (non-ambiguous nicknames that are unique across sports)
+_TEAM_ALIASES: dict[str, str] = {
+    # NBA (unique nicknames only)
+    "grizzlies": "memphis grizzlies", "lakers": "los angeles lakers",
+    "celtics": "boston celtics", "warriors": "golden state warriors",
+    "thunder": "oklahoma city thunder", "cavaliers": "cleveland cavaliers", "cavs": "cleveland cavaliers",
+    "knicks": "new york knicks", "nets": "brooklyn nets",
+    "76ers": "philadelphia 76ers", "sixers": "philadelphia 76ers",
+    "heat": "miami heat", "bucks": "milwaukee bucks",
+    "pacers": "indiana pacers", "raptors": "toronto raptors",
+    "magic": "orlando magic", "hornets": "charlotte hornets",
+    "mavericks": "dallas mavericks", "mavs": "dallas mavericks",
+    "rockets": "houston rockets", "nuggets": "denver nuggets",
+    "timberwolves": "minnesota timberwolves",
+    "trail blazers": "portland trail blazers", "blazers": "portland trail blazers",
+    "jazz": "utah jazz", "pelicans": "new orleans pelicans",
+    "suns": "phoenix suns", "clippers": "los angeles clippers",
+    # NFL (unique nicknames only)
+    "chiefs": "kansas city chiefs", "eagles": "philadelphia eagles",
+    "bills": "buffalo bills", "ravens": "baltimore ravens",
+    "49ers": "san francisco 49ers", "niners": "san francisco 49ers",
+    "cowboys": "dallas cowboys", "packers": "green bay packers",
+    "dolphins": "miami dolphins", "vikings": "minnesota vikings",
+    "chargers": "los angeles chargers", "steelers": "pittsburgh steelers",
+    "texans": "houston texans", "bengals": "cincinnati bengals",
+    "seahawks": "seattle seahawks", "commanders": "washington commanders",
+    "broncos": "denver broncos", "jaguars": "jacksonville jaguars", "jags": "jacksonville jaguars",
+    "colts": "indianapolis colts", "falcons": "atlanta falcons",
+    "saints": "new orleans saints", "buccaneers": "tampa bay buccaneers", "bucs": "tampa bay buccaneers",
+    "titans": "tennessee titans", "rams": "los angeles rams",
+    "patriots": "new england patriots",
+    # NHL (unique nicknames only)
+    "bruins": "boston bruins", "lightning": "tampa bay lightning",
+    "maple leafs": "toronto maple leafs", "leafs": "toronto maple leafs",
+    "oilers": "edmonton oilers", "avalanche": "colorado avalanche",
+    "flames": "calgary flames", "wild": "minnesota wild",
+    "capitals": "washington capitals", "caps": "washington capitals",
+    "red wings": "detroit red wings", "penguins": "pittsburgh penguins", "pens": "pittsburgh penguins",
+    "blues": "st. louis blues", "st louis": "st. louis blues", "st. louis": "st. louis blues",
+    "canucks": "vancouver canucks", "islanders": "new york islanders",
+    "predators": "nashville predators", "preds": "nashville predators",
+    "senators": "ottawa senators", "sens": "ottawa senators",
+    "blackhawks": "chicago blackhawks",
+    "golden knights": "vegas golden knights",
+    "kraken": "seattle kraken", "ducks": "anaheim ducks",
+    "blue jackets": "columbus blue jackets", "coyotes": "utah hockey club",
+    "sabres": "buffalo sabres", "devils": "new jersey devils",
+    "flyers": "philadelphia flyers",
+    "canadiens": "montreal canadiens", "habs": "montreal canadiens",
+    "sharks": "san jose sharks",
+}
+
+
+# Soccer club name suffixes to strip — only at end of name
+# Two tiers: safe to always strip (fc, sc...) and contextual (city, united — only at end)
+_SOCCER_STRIP_ALWAYS = re.compile(
+    r"\s+(?:fc|sc|cf|ac|afc|bk|sk|fk|if|ff|ssc|as|ss|ssd"
+    r"|saudi club|club|hotspur|wanderers|albion|rovers|athletic|spor|sport)$",
+    re.IGNORECASE,
+)
+_SOCCER_STRIP_END = re.compile(
+    r"\s+(?:united|city|town|county)$",
+    re.IGNORECASE,
+)
+# Common prefixes for European clubs: "AJ Auxerre" → "Auxerre"
+_SOCCER_STRIP_PREFIX = re.compile(
+    r"^(?:aj|us|rc|ss|as|ac|fc|fk|sk|bk|if|ff|sc|cf|ssc|ssd|cd|ca|cs|ud|bv"
+    r"|real|sporting|racing|dynamo|dinamo|\d+\.)\s+",
+    re.IGNORECASE,
+)
+# Year suffix: "Bologna FC 1909" → "Bologna FC"
+_YEAR_SUFFIX = re.compile(r"\s+\d{4}$")
+# Umlaut mapping
+_UMLAUTS = str.maketrans({"ü": "u", "ö": "o", "ä": "a", "é": "e", "á": "a", "í": "i", "ó": "o", "ú": "u", "ñ": "n", "ç": "c", "ş": "s", "ı": "i", "ğ": "g", "ž": "z", "š": "s", "č": "c", "ř": "r", "ý": "y", "ą": "a", "ę": "e", "ł": "l", "ń": "n", "ś": "s", "ź": "z", "ż": "z"})
+
+# European club aliases (common mismatches between platforms)
+_SOCCER_ALIASES: dict[str, str] = {
+    "atletico": "atletico madrid", "atletico madrid": "atletico madrid", "atletico de madrid": "atletico madrid", "club atletico madrid": "atletico madrid", "atl. madrid": "atletico madrid", "atl madrid": "atletico madrid",
+    "bayern munich": "bayern munchen", "bayern munchen": "bayern munchen", "bayern": "bayern munchen",
+    "psg": "paris saint-germain", "paris saint germain": "paris saint-germain", "paris sg": "paris saint-germain",
+    "inter": "inter milan", "inter milan": "inter milan", "internazionale": "inter milan",
+    "ac milan": "milan", "milan": "milan",
+    "man city": "manchester city", "man utd": "manchester united", "man united": "manchester united",
+    "spurs": "tottenham",
+    "wolves": "wolverhampton",
+    "brighton": "brighton", "brighton and hove albion": "brighton", "brighton & hove albion": "brighton", "brighton & hove": "brighton", "brighton and hove": "brighton", "brighton hove": "brighton",
+    "nottingham forest": "nottingham", "nott'm forest": "nottingham",
+    "bournemouth": "bournemouth", "afc bournemouth": "bournemouth",
+    "bilbao": "athletic bilbao", "athletic bilbao": "athletic bilbao", "athletic club": "athletic bilbao",
+    "betis": "real betis", "real betis": "real betis",
+    "sociedad": "real sociedad", "real sociedad": "real sociedad",
+    "celta vigo": "celta vigo", "celta de vigo": "celta vigo", "celta": "celta vigo",
+    "1. fc cologne": "fc koln", "fc koln": "fc koln", "koln": "fc koln", "cologne": "fc koln",
+    "rb leipzig": "leipzig", "leipzig": "leipzig", "rasenballsport leipzig": "leipzig",
+    "monchengladbach": "borussia monchengladbach", "gladbach": "borussia monchengladbach", "bmg": "borussia monchengladbach",
+    "dortmund": "borussia dortmund", "bvb": "borussia dortmund", "borussia dortmund": "borussia dortmund", "bv borussia 09 dortmund": "borussia dortmund",
+    "leverkusen": "bayer leverkusen", "bayer leverkusen": "bayer leverkusen",
+    "hertha": "hertha berlin", "hertha bsc": "hertha berlin",
+    "napoli": "napoli", "ssc napoli": "napoli",
+    "lazio": "lazio", "ss lazio": "lazio",
+    "roma": "roma", "as roma": "roma",
+    "fiorentina": "fiorentina", "acf fiorentina": "fiorentina",
+    "atalanta": "atalanta", "atalanta bc": "atalanta",
+    "marseille": "olympique marseille", "om": "olympique marseille", "olympique de marseille": "olympique marseille",
+    "lyon": "olympique lyon", "olympique lyonnais": "olympique lyon", "ol": "olympique lyon",
+    "monaco": "as monaco", "as monaco": "as monaco",
+    "st etienne": "saint-etienne", "saint etienne": "saint-etienne",
+    "al akhdoud": "al okhdood", "al-akhdoud": "al okhdood", "al okhdood": "al okhdood",
+    "al ittifaq": "al ettifaq", "al-ittifaq": "al ettifaq", "al ettifaq": "al ettifaq",
+    # Additional frequently mismatched
+    "everton": "everton", "everton fc": "everton",
+    "leeds": "leeds", "leeds utd": "leeds",
+    "como": "como", "como 1907": "como",
+    "genoa": "genoa", "genoa cfc": "genoa",
+    "hellas verona": "verona", "verona": "verona",
+    "le havre": "le havre", "le havre ac": "le havre",
+    "alaves": "alaves", "deportivo alaves": "alaves",
+    "angers": "angers", "angers sco": "angers",
+    "mallorca": "mallorca", "rcd mallorca": "mallorca",
+}
+
+
+def normalize_team_name(name: str, sport: str = "") -> str:
+    """Normalize a team name for comparison.
+
+    Uses sport-specific alias tables when sport is provided to resolve
+    city-name ambiguity (e.g. "Seattle" → Seahawks in NFL, Kraken in NHL).
+    Then strips common suffixes like FC/SC/Hotspur/Wanderers for soccer teams.
+    """
     name = name.lower().strip()
-    # Remove common suffixes/prefixes
-    for remove in ("fc", "sc", "cf", "ac", "afc", "united", "city", "town", "county"):
-        name = name.replace(f" {remove}", "").replace(f"{remove} ", "")
-    # Remove extra whitespace
-    return " ".join(name.split())
+    # Normalize dashes and umlauts
+    name = name.replace("-", " ")
+    name = name.translate(_UMLAUTS)
+    name = " ".join(name.split())
+    # Check sport-specific aliases first (resolves city ambiguity)
+    sport_aliases = _SPORT_ALIASES.get(sport, {})
+    if sport_aliases and name in sport_aliases:
+        return sport_aliases[name]
+    # Check generic alias table (non-ambiguous nicknames)
+    if name in _TEAM_ALIASES:
+        return _TEAM_ALIASES[name]
+    # Check soccer aliases
+    if name in _SOCCER_ALIASES:
+        return _SOCCER_ALIASES[name]
+    # Remove year suffix: "1909", "1893", etc.
+    name = _YEAR_SUFFIX.sub("", name).strip()
+    # Remove soccer suffixes iteratively (some names have multiple: "Wolverhampton Wanderers FC")
+    for _ in range(3):
+        prev = name
+        name = _SOCCER_STRIP_ALWAYS.sub("", name).strip()
+        name = _SOCCER_STRIP_END.sub("", name).strip()
+        name = " ".join(name.split())
+        if name == prev:
+            break
+    # Strip common prefixes after suffixes (order matters: "FC Bayern München" → "bayern munchen")
+    name_no_prefix = _SOCCER_STRIP_PREFIX.sub("", name).strip()
+    if len(name_no_prefix) > 2:
+        name = name_no_prefix
+    # Strip Spanish/Italian/Portuguese articles: "de", "del", "di", "do", "da", "e"
+    name = re.sub(r"\b(?:de|del|di|do|da)\b", " ", name)
+    # Normalize & to space
+    name = name.replace("&", " ")
+    name = " ".join(name.split())
+    # Check aliases again after cleaning
+    if sport_aliases and name in sport_aliases:
+        return sport_aliases[name]
+    if name in _TEAM_ALIASES:
+        return _TEAM_ALIASES[name]
+    if name in _SOCCER_ALIASES:
+        return _SOCCER_ALIASES[name]
+    return name
 
 
-def team_similarity(a: str, b: str) -> float:
+def team_similarity(a: str, b: str, sport: str = "") -> float:
     """Return similarity score between two team names (0-100)."""
-    na, nb = normalize_team_name(a), normalize_team_name(b)
+    na, nb = normalize_team_name(a, sport), normalize_team_name(b, sport)
     if not na or not nb:
         return 0
     # Try exact match first
@@ -129,8 +408,8 @@ def _dates_compatible(pm: Market, km: Market) -> bool:
 
 
 def _is_group_stage(text: str) -> bool:
-    """Check if text indicates a group-stage market."""
-    return bool(re.search(r"\bgroup\b", text, re.IGNORECASE))
+    """Check if text indicates a group-stage market (e.g. 'Group L', 'Group A')."""
+    return bool(re.search(r"\bGroup\s+[A-Za-z0-9]\b", text))
 
 
 def _is_tournament_winner(text: str) -> bool:
@@ -140,11 +419,21 @@ def _is_tournament_winner(text: str) -> bool:
 
 def _groups_compatible(pm: Market, km: Market) -> bool:
     """Check if two futures markets belong to the same event group."""
-    # Reject group-stage vs tournament-winner mismatches
     pg_text = pm.event_group or ""
     kg_text = km.event_group or ""
-    if (_is_group_stage(pg_text) and _is_tournament_winner(kg_text)) or \
-       (_is_tournament_winner(pg_text) and _is_group_stage(kg_text)):
+
+    # Reject group-stage vs tournament-winner mismatches
+    # Check both event_group AND title for group-stage indicators
+    pm_is_group = _is_group_stage(pg_text) or _is_group_stage(pm.title)
+    km_is_group = _is_group_stage(kg_text) or _is_group_stage(km.title)
+    pm_is_winner = _is_tournament_winner(pg_text) or _is_tournament_winner(pm.title)
+    km_is_winner = _is_tournament_winner(kg_text) or _is_tournament_winner(km.title)
+
+    # If one is group-stage and the other is not → incompatible
+    if pm_is_group != km_is_group:
+        return False
+
+    if (pm_is_group and km_is_winner) or (km_is_group and pm_is_winner):
         return False
 
     pg = _canonicalize_event_group(pg_text)
@@ -218,25 +507,25 @@ def match_events(
                 if not _groups_compatible(pm, km):
                     continue
 
+            # Use the more specific sport for normalization
+            sport = pm.sport or km.sport or ""
+
             if pm.team_b and km.team_b:
-                # Both have two teams — match both
-                score_direct = min(
-                    team_similarity(pm.team_a, km.team_a),
-                    team_similarity(pm.team_b, km.team_b),
+                # Both have two teams — match both, direct order only.
+                # team_a = YES team on both platforms ("Will X win?"),
+                # so swapped order would pair opposite outcomes (false arbs).
+                score = min(
+                    team_similarity(pm.team_a, km.team_a, sport),
+                    team_similarity(pm.team_b, km.team_b, sport),
                 )
-                score_swapped = min(
-                    team_similarity(pm.team_a, km.team_b),
-                    team_similarity(pm.team_b, km.team_a),
-                )
-                score = max(score_direct, score_swapped)
             else:
                 # Polymarket has single team (futures market)
                 # Match against YES team on Kalshi
                 kalshi_yes_team = km.raw_data.get("yes_team", km.team_a)
                 score = max(
-                    team_similarity(pm.team_a, km.team_a),
-                    team_similarity(pm.team_a, km.team_b),
-                    team_similarity(pm.team_a, kalshi_yes_team),
+                    team_similarity(pm.team_a, km.team_a, sport),
+                    team_similarity(pm.team_a, km.team_b, sport),
+                    team_similarity(pm.team_a, kalshi_yes_team, sport),
                 )
 
             if score > best_score:

@@ -13,7 +13,7 @@ from src.connectors.polymarket import PolymarketConnector
 from src.db import db
 from src.engine.arbitrage import calculate_arbitrage
 from src.engine.matcher import match_events
-from src.models import Platform, SportEvent
+from src.models import MarketPrice, Platform, SportEvent
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -28,7 +28,7 @@ KALSHI_CACHE_TTL = 600  # 10 minutes
 POLY_CACHE_TTL = 300    # 5 minutes
 
 # Concurrency limiter for price fetches
-_price_semaphore = asyncio.Semaphore(20)
+_price_semaphore = asyncio.Semaphore(10)
 
 
 async def _fetch_with_semaphore(coro):
@@ -44,13 +44,12 @@ async def fetch_and_update_prices(
 ) -> None:
     """Fetch latest prices for all matched events using batch/parallel fetching."""
     # Collect all price fetch tasks across all events
+    # NOTE: Kalshi prices are already set during fetch_sports_events() — no re-fetch needed.
     poly_normal_tokens: list[tuple[SportEvent, str]] = []  # (event, token_id)
     poly_neg_risk_ids: list[tuple[SportEvent, str]] = []   # (event, market_id)
-    kalshi_ids: list[tuple[SportEvent, str]] = []           # (event, market_id)
 
     for event in events:
         pm = event.markets.get(Platform.POLYMARKET)
-        km = event.markets.get(Platform.KALSHI)
 
         if pm:
             token_ids = pm.raw_data.get("clob_token_ids", [])
@@ -60,8 +59,6 @@ async def fetch_and_update_prices(
                 poly_neg_risk_ids.append((event, price_id))
             else:
                 poly_normal_tokens.append((event, price_id))
-        if km:
-            kalshi_ids.append((event, km.market_id))
 
     # Batch fetch: Polymarket normal tokens via batch API
     batch_prices = {}
@@ -97,12 +94,6 @@ async def fetch_and_update_prices(
             )
             individual_tasks.append(("poly", event, token_id, task))
 
-    for event, market_id in kalshi_ids:
-        task = asyncio.ensure_future(
-            _fetch_with_semaphore(kalshi.fetch_price(market_id))
-        )
-        individual_tasks.append(("kalshi", event, market_id, task))
-
     if individual_tasks:
         results = await asyncio.gather(
             *[t[3] for t in individual_tasks], return_exceptions=True
@@ -117,12 +108,48 @@ async def fetch_and_update_prices(
                 pm = event.markets.get(Platform.POLYMARKET)
                 if pm:
                     pm.price = result
-            elif label == "kalshi":
-                km = event.markets.get(Platform.KALSHI)
-                if km:
-                    km.price = result
 
-        logger.info(f"Individual price fetches: {len(individual_tasks)} (negRisk + Kalshi)")
+        logger.info(f"Individual price fetches: {len(individual_tasks)} (negRisk + batch fallback)")
+
+
+async def fetch_book_for_candidates(
+    poly: PolymarketConnector,
+    candidates: list[SportEvent],
+) -> None:
+    """Fetch Polymarket order books for arb candidates to get bid/ask prices."""
+    tasks: list[tuple[SportEvent, asyncio.Task]] = []
+    for event in candidates:
+        pm = event.markets.get(Platform.POLYMARKET)
+        if not pm:
+            continue
+        token_ids = pm.raw_data.get("clob_token_ids", [])
+        token_id = token_ids[0] if token_ids else pm.market_id
+        task = asyncio.ensure_future(
+            _fetch_with_semaphore(poly.fetch_book(token_id))
+        )
+        tasks.append((event, task))
+
+    if not tasks:
+        return
+
+    results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+    updated = 0
+    for (event, _), result in zip(tasks, results):
+        if isinstance(result, Exception):
+            continue
+        if result is None:
+            continue
+        pm = event.markets.get(Platform.POLYMARKET)
+        if pm and pm.price:
+            # Preserve volume from batch price, update bid/ask from book
+            result.volume = pm.price.volume
+            pm.price = result
+            updated += 1
+        elif pm:
+            pm.price = result
+            updated += 1
+
+    logger.info(f"Book fetch: {updated}/{len(tasks)} Polymarket order books updated")
 
 
 def broadcast_event(event_type: str, data: dict) -> None:
@@ -184,18 +211,38 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             app_state["matched_events"] = matched
 
             if matched:
-                # Fetch prices for matched events
+                # Pass 1: Fetch midpoint prices for all matched events
                 await fetch_and_update_prices(poly, kalshi, matched)
+
+                # Pass 1.5: Screen candidates by midpoint cost (with 2% buffer for bid/ask spread)
+                arb_candidates: list[SportEvent] = []
+                for event in matched:
+                    pm = event.markets.get(Platform.POLYMARKET)
+                    km = event.markets.get(Platform.KALSHI)
+                    if pm and km and pm.price and km.price:
+                        cost1 = pm.price.yes_price + km.price.no_price
+                        cost2 = km.price.yes_price + pm.price.no_price
+                        if cost1 < 1.02 or cost2 < 1.02:
+                            arb_candidates.append(event)
+
+                # Pass 2: Fetch order books only for candidates (bid/ask precision)
+                if arb_candidates:
+                    logger.info(
+                        f"Arb candidates: {len(arb_candidates)}/{len(matched)} "
+                        f"passed midpoint screen, fetching order books"
+                    )
+                    await fetch_book_for_candidates(poly, arb_candidates)
 
                 # Track which arbs are found this scan (for deactivation)
                 current_arb_keys: set[tuple[str, str, str]] = set()
 
-                # Check for arbitrage
+                # Pass 3: Calculate arbitrage with executable prices
                 for event in matched:
                     opp = calculate_arbitrage(event)
                     if opp and opp.roi_after_fees >= settings.min_arb_percent:
                         # Skip if ROI suspiciously high
-                        if opp.roi_after_fees > settings.max_arb_percent:
+                        suspicious = opp.roi_after_fees > settings.max_arb_percent
+                        if suspicious:
                             opp.details["suspicious"] = True
                             logger.warning(
                                 f"SUSPICIOUS ARB (ROI>{settings.max_arb_percent}%): "
@@ -207,25 +254,34 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             opp.platform_buy_yes.value,
                             opp.platform_buy_no.value,
                         )
-                        current_arb_keys.add(arb_key)
 
                         opp_id = await db.save_opportunity(opp)
-                        logger.info(
-                            f"ARBITRAGE SAVED: {opp.event_title} "
-                            f"ROI={opp.roi_after_fees}% id={opp_id}"
-                        )
-                        broadcast_event("new_arb", {
-                            "event": opp.event_title,
-                            "roi": opp.roi_after_fees,
-                            "cost": opp.total_cost,
-                        })
+
+                        if suspicious:
+                            # Deactivate ALL active entries for this key (including old ones)
+                            n = await db.deactivate_by_key(*arb_key)
+                            logger.info(
+                                f"SUSPICIOUS ARB (deactivated {n}): {opp.event_title} "
+                                f"ROI={opp.roi_after_fees}% id={opp_id}"
+                            )
+                        else:
+                            current_arb_keys.add(arb_key)
+                            logger.info(
+                                f"ARBITRAGE SAVED: {opp.event_title} "
+                                f"ROI={opp.roi_after_fees}% id={opp_id}"
+                            )
+                            broadcast_event("new_arb", {
+                                "event": opp.event_title,
+                                "roi": opp.roi_after_fees,
+                                "cost": opp.total_cost,
+                            })
 
                 # Deactivate stale opportunities not found this scan
                 active_keys = await db.get_active_opp_keys()
                 for key, opp_id in active_keys.items():
                     if key not in current_arb_keys:
-                        await db.deactivate_opportunity(opp_id)
-                        logger.info(f"Deactivated stale arb: {opp_id} key={key}")
+                        n = await db.deactivate_by_key(*key)
+                        logger.info(f"Deactivated stale arbs: {n} entries for key={key}")
 
                 broadcast_event("price_update", {
                     "matched_count": len(matched),

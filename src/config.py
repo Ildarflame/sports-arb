@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Kalshi
+    kalshi_api_key_id: str = ""
+    kalshi_private_key_path: str = ""
     kalshi_email: str = ""
     kalshi_password: str = ""
     kalshi_api_base: str = "https://api.elections.kalshi.com/trade-api/v2"
