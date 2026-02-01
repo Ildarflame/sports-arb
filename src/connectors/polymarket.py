@@ -153,24 +153,72 @@ class PolymarketConnector(BaseConnector):
         if self._ws:
             await self._ws.close()
 
+    # Additional tag slugs to fetch (esports game markets live under these tags,
+    # not always reachable via the main "sports" tag due to pagination limits).
+    _EXTRA_TAG_SLUGS = (
+        "counter-strike-2",
+        "league-of-legends",
+        "valorant",
+        "dota-2",
+    )
+
     async def fetch_sports_events(self) -> list[Market]:
         """Fetch sports events from Gamma API.
 
         Handles two market formats:
         1. negRisk=True (soccer 3-way): separate YES/NO sub-markets per team + draw
         2. negRisk=False (US sports 2-way): single market, outcomes are team names
+
+        Also fetches esports-specific tags to cover game markets that fall
+        outside the main "sports" tag pagination window.
         """
         markets: list[Market] = []
+        seen_event_ids: set[str] = set()
+
+        # Primary fetch: tag_slug=sports (main coverage)
+        sports_markets, sports_seen = await self._fetch_events_by_tag("sports", max_pages=10)
+        markets.extend(sports_markets)
+        seen_event_ids.update(sports_seen)
+        sports_count = len(markets)
+
+        # Secondary fetch: esports-specific tags (covers CS2, LoL, Valorant, Dota2 games)
+        extra_count = 0
+        for tag in self._EXTRA_TAG_SLUGS:
+            tag_markets, tag_seen = await self._fetch_events_by_tag(
+                tag, max_pages=5, seen_event_ids=seen_event_ids,
+            )
+            markets.extend(tag_markets)
+            seen_event_ids.update(tag_seen)
+            extra_count += len(tag_markets)
+
+        logger.info(
+            f"Polymarket: fetched {len(markets)} sports markets "
+            f"({sports_count} from sports + {extra_count} from esports tags, "
+            f"{len(seen_event_ids)} unique events)"
+        )
+        return markets
+
+    async def _fetch_events_by_tag(
+        self,
+        tag_slug: str,
+        max_pages: int = 10,
+        seen_event_ids: set[str] | None = None,
+    ) -> tuple[list[Market], set[str]]:
+        """Fetch events for a single tag_slug and parse into Markets.
+
+        Returns (markets, seen_event_ids) for deduplication across tags.
+        """
+        markets: list[Market] = []
+        seen = set[str]()
         offset = 0
         limit = 100
-        max_pages = 10
 
         try:
             for page in range(max_pages):
                 resp = await self._http.get(
                     "/events",
                     params={
-                        "tag_slug": "sports",
+                        "tag_slug": tag_slug,
                         "active": "true",
                         "closed": "false",
                         "limit": limit,
@@ -185,181 +233,193 @@ class PolymarketConnector(BaseConnector):
                     break
 
                 for event in events:
-                    event_title = event.get("title", "")
-                    event_markets = event.get("markets", [])
-                    slug = event.get("slug", "")
                     event_id = str(event.get("id", ""))
-                    neg_risk = event.get("negRisk", False)
 
-                    # Detect sport from event-level info
-                    event_tags = [t.get("label", t) if isinstance(t, dict) else str(t)
-                                  for t in event.get("tags", [])]
-                    sport = _detect_sport_poly(event_title, event_tags)
+                    # Skip events already seen from another tag
+                    if seen_event_ids and event_id in seen_event_ids:
+                        continue
+                    if event_id in seen:
+                        continue
+                    seen.add(event_id)
 
-                    # Fallback: try to detect sport from individual market questions
-                    if not sport:
-                        for _m in event_markets:
-                            q = _m.get("question", "")
-                            if q:
-                                sport = _detect_sport_poly(q)
-                                if sport:
-                                    break
-
-                    for m in event_markets:
-                        sports_type = m.get("sportsMarketType", "")
-
-                        # Only process moneyline markets for arbitrage
-                        if sports_type and sports_type != "moneyline":
-                            continue
-
-                        # Classify: daily game vs futures
-                        mtype = "game" if sports_type else "futures"
-
-                        outcomes = self._parse_json_field(m.get("outcomes", "[]"))
-                        prices = self._parse_json_field(m.get("outcomePrices", "[]"))
-                        tokens = self._parse_json_field(m.get("clobTokenIds", "[]"))
-
-                        if len(outcomes) != 2:
-                            continue
-
-                        question = m.get("question", "")
-                        group_item_title = m.get("groupItemTitle", "")
-                        market_id_base = str(m.get("id", m.get("conditionId", "")))
-                        market_slug = m.get("slug", "")
-
-                        # Extract game_date for daily games
-                        game_date = None
-                        if mtype == "game":
-                            game_date = (
-                                _parse_game_date_from_question(question)
-                                or _parse_game_date_from_iso(m.get("gameStartTime"))
-                            )
-
-                        # Event group for futures matching
-                        event_group = event_title if mtype == "futures" else ""
-
-                        if neg_risk:
-                            # 3-way soccer or multi-outcome futures:
-                            # each sub-market is YES/NO for one team
-                            if "draw" in group_item_title.lower() or "draw" in question.lower():
-                                continue
-
-                            team_name = group_item_title or self._extract_team_from_question(question)
-                            if not team_name:
-                                continue
-
-                            # Parse opponent (team_b) from event_title "X vs Y"
-                            team_b_neg = ""
-                            if event_title:
-                                ev_a, ev_b = self._parse_vs_teams(event_title)
-                                if ev_a and ev_b:
-                                    # Figure out which side this sub-market is
-                                    tn_lower = team_name.lower()
-                                    if tn_lower in ev_a.lower() or ev_a.lower() in tn_lower:
-                                        team_b_neg = ev_b
-                                    elif tn_lower in ev_b.lower() or ev_b.lower() in tn_lower:
-                                        team_b_neg = ev_a
-                                    else:
-                                        # fuzzy fallback
-                                        from rapidfuzz import fuzz as _fuzz
-                                        if _fuzz.ratio(tn_lower, ev_a.lower()) > _fuzz.ratio(tn_lower, ev_b.lower()):
-                                            team_b_neg = ev_b
-                                        else:
-                                            team_b_neg = ev_a
-
-                            # Try harder to get game_date for negRisk game markets
-                            if mtype == "game" and not game_date:
-                                game_date = _parse_game_date_from_iso(
-                                    m.get("endDate") or event.get("endDate")
-                                )
-
-                            price = self._build_price(prices)
-                            markets.append(Market(
-                                platform=Platform.POLYMARKET,
-                                market_id=market_id_base,
-                                event_id=event_id,
-                                title=question,
-                                team_a=team_name,
-                                team_b=team_b_neg,
-                                category="sports",
-                                market_type=mtype,
-                                sport=sport,
-                                game_date=game_date,
-                                event_group=event_group,
-                                url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
-                                price=price,
-                                raw_data={
-                                    "clob_token_ids": tokens,
-                                    "condition_id": m.get("conditionId", ""),
-                                    "slug": slug,
-                                    "event_title": event_title,
-                                    "outcomes": outcomes,
-                                    "sports_market_type": sports_type,
-                                    "neg_risk": True,
-                                },
-                            ))
-                        else:
-                            # 2-way market: outcomes are team names
-                            # Create one Market per team for cross-platform matching
-                            # Parse team_b from event_title "Team A vs. Team B" pattern
-                            other_team = {0: "", 1: ""}
-                            if len(outcomes) == 2:
-                                other_team = {0: outcomes[1], 1: outcomes[0]}
-
-                            for i, team_name in enumerate(outcomes):
-                                if not team_name or len(team_name) < 2:
-                                    continue
-
-                                price = None
-                                if len(prices) == 2:
-                                    try:
-                                        yes_p = float(prices[i])
-                                        if yes_p > 0:
-                                            price = MarketPrice(
-                                                yes_price=round(yes_p, 4),
-                                                no_price=round(1.0 - yes_p, 4),
-                                                last_updated=datetime.now(UTC),
-                                            )
-                                    except (ValueError, TypeError):
-                                        pass
-
-                                team_token = [tokens[i]] if i < len(tokens) else tokens
-                                markets.append(Market(
-                                    platform=Platform.POLYMARKET,
-                                    market_id=f"{market_id_base}_{i}",
-                                    event_id=event_id,
-                                    title=f"Will {team_name} win? ({event_title})",
-                                    team_a=team_name,
-                                    team_b=other_team.get(i, ""),
-                                    category="sports",
-                                    market_type=mtype,
-                                    sport=sport,
-                                    game_date=game_date,
-                                    event_group=event_group,
-                                    url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
-                                    price=price,
-                                    raw_data={
-                                        "clob_token_ids": team_token,
-                                        "condition_id": m.get("conditionId", ""),
-                                        "slug": slug,
-                                        "event_title": event_title,
-                                        "outcomes": outcomes,
-                                        "outcome_index": i,
-                                        "sports_market_type": sports_type,
-                                        "neg_risk": False,
-                                    },
-                                ))
+                    parsed = self._parse_event(event)
+                    markets.extend(parsed)
 
                 offset += limit
                 if len(events) < limit:
                     break
 
-            logger.info(
-                f"Polymarket: fetched {len(markets)} sports markets "
-                f"({page + 1} pages, {offset} events scanned)"
-            )
         except Exception:
-            logger.exception("Error fetching Polymarket sports events")
+            logger.exception(f"Error fetching Polymarket events for tag={tag_slug}")
+        return markets, seen
+
+    def _parse_event(self, event: dict) -> list[Market]:
+        """Parse a single Gamma API event dict into a list of Market objects."""
+        markets: list[Market] = []
+        event_title = event.get("title", "")
+        event_markets = event.get("markets", [])
+        slug = event.get("slug", "")
+        event_id = str(event.get("id", ""))
+        neg_risk = event.get("negRisk", False)
+
+        # Detect sport from event-level info
+        event_tags = [t.get("label", t) if isinstance(t, dict) else str(t)
+                      for t in event.get("tags", [])]
+        sport = _detect_sport_poly(event_title, event_tags)
+
+        # Fallback: try to detect sport from individual market questions
+        if not sport:
+            for _m in event_markets:
+                q = _m.get("question", "")
+                if q:
+                    sport = _detect_sport_poly(q)
+                    if sport:
+                        break
+
+        for m in event_markets:
+            sports_type = m.get("sportsMarketType", "")
+
+            # Only process moneyline markets for arbitrage
+            if sports_type and sports_type != "moneyline":
+                continue
+
+            # Classify: daily game vs futures
+            mtype = "game" if sports_type else "futures"
+
+            outcomes = self._parse_json_field(m.get("outcomes", "[]"))
+            prices = self._parse_json_field(m.get("outcomePrices", "[]"))
+            tokens = self._parse_json_field(m.get("clobTokenIds", "[]"))
+
+            if len(outcomes) != 2:
+                continue
+
+            question = m.get("question", "")
+            group_item_title = m.get("groupItemTitle", "")
+            market_id_base = str(m.get("id", m.get("conditionId", "")))
+            market_slug = m.get("slug", "")
+
+            # Extract game_date for daily games
+            game_date = None
+            if mtype == "game":
+                game_date = (
+                    _parse_game_date_from_question(question)
+                    or _parse_game_date_from_iso(m.get("gameStartTime"))
+                )
+
+            # Event group for futures matching
+            event_group = event_title if mtype == "futures" else ""
+
+            if neg_risk:
+                # 3-way soccer or multi-outcome futures:
+                # each sub-market is YES/NO for one team
+                if "draw" in group_item_title.lower() or "draw" in question.lower():
+                    continue
+
+                team_name = group_item_title or self._extract_team_from_question(question)
+                if not team_name:
+                    continue
+
+                # Parse opponent (team_b) from event_title "X vs Y"
+                team_b_neg = ""
+                if event_title:
+                    ev_a, ev_b = self._parse_vs_teams(event_title)
+                    if ev_a and ev_b:
+                        # Figure out which side this sub-market is
+                        tn_lower = team_name.lower()
+                        if tn_lower in ev_a.lower() or ev_a.lower() in tn_lower:
+                            team_b_neg = ev_b
+                        elif tn_lower in ev_b.lower() or ev_b.lower() in tn_lower:
+                            team_b_neg = ev_a
+                        else:
+                            # fuzzy fallback
+                            from rapidfuzz import fuzz as _fuzz
+                            if _fuzz.ratio(tn_lower, ev_a.lower()) > _fuzz.ratio(tn_lower, ev_b.lower()):
+                                team_b_neg = ev_b
+                            else:
+                                team_b_neg = ev_a
+
+                # Try harder to get game_date for negRisk game markets
+                if mtype == "game" and not game_date:
+                    game_date = _parse_game_date_from_iso(
+                        m.get("endDate") or event.get("endDate")
+                    )
+
+                price = self._build_price(prices)
+                markets.append(Market(
+                    platform=Platform.POLYMARKET,
+                    market_id=market_id_base,
+                    event_id=event_id,
+                    title=question,
+                    team_a=team_name,
+                    team_b=team_b_neg,
+                    category="sports",
+                    market_type=mtype,
+                    sport=sport,
+                    game_date=game_date,
+                    event_group=event_group,
+                    url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
+                    price=price,
+                    raw_data={
+                        "clob_token_ids": tokens,
+                        "condition_id": m.get("conditionId", ""),
+                        "slug": slug,
+                        "event_title": event_title,
+                        "outcomes": outcomes,
+                        "sports_market_type": sports_type,
+                        "neg_risk": True,
+                    },
+                ))
+            else:
+                # 2-way market: outcomes are team names
+                # Create one Market per team for cross-platform matching
+                other_team = {0: "", 1: ""}
+                if len(outcomes) == 2:
+                    other_team = {0: outcomes[1], 1: outcomes[0]}
+
+                for i, team_name in enumerate(outcomes):
+                    if not team_name or len(team_name) < 2:
+                        continue
+
+                    price = None
+                    if len(prices) == 2:
+                        try:
+                            yes_p = float(prices[i])
+                            if yes_p > 0:
+                                price = MarketPrice(
+                                    yes_price=round(yes_p, 4),
+                                    no_price=round(1.0 - yes_p, 4),
+                                    last_updated=datetime.now(UTC),
+                                )
+                        except (ValueError, TypeError):
+                            pass
+
+                    team_token = [tokens[i]] if i < len(tokens) else tokens
+                    markets.append(Market(
+                        platform=Platform.POLYMARKET,
+                        market_id=f"{market_id_base}_{i}",
+                        event_id=event_id,
+                        title=f"Will {team_name} win? ({event_title})",
+                        team_a=team_name,
+                        team_b=other_team.get(i, ""),
+                        category="sports",
+                        market_type=mtype,
+                        sport=sport,
+                        game_date=game_date,
+                        event_group=event_group,
+                        url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
+                        price=price,
+                        raw_data={
+                            "clob_token_ids": team_token,
+                            "condition_id": m.get("conditionId", ""),
+                            "slug": slug,
+                            "event_title": event_title,
+                            "outcomes": outcomes,
+                            "outcome_index": i,
+                            "sports_market_type": sports_type,
+                            "neg_risk": False,
+                        },
+                    ))
+
         return markets
 
     @staticmethod
