@@ -220,8 +220,14 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                     pm = event.markets.get(Platform.POLYMARKET)
                     km = event.markets.get(Platform.KALSHI)
                     if pm and km and pm.price and km.price:
-                        cost1 = pm.price.yes_price + km.price.no_price
-                        cost2 = km.price.yes_price + pm.price.no_price
+                        pp, kp = pm.price, km.price
+                        if event.teams_swapped:
+                            # Swapped: Kalshi YES = opposite team, so invert
+                            cost1 = pp.yes_price + (1 - kp.yes_price)
+                            cost2 = kp.no_price + pp.no_price
+                        else:
+                            cost1 = pp.yes_price + kp.no_price
+                            cost2 = kp.yes_price + pp.no_price
                         if cost1 < 1.02 or cost2 < 1.02:
                             arb_candidates.append(event)
 

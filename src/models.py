@@ -48,6 +48,7 @@ class SportEvent(BaseModel):
     category: str = "sports"
     markets: dict[Platform, Market] = Field(default_factory=dict)
     matched: bool = False
+    teams_swapped: bool = False  # True = Poly team_a corresponds to Kalshi team_b
 
 
 class ArbitrageOpportunity(BaseModel):

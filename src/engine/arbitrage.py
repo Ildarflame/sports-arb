@@ -10,6 +10,20 @@ from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
 logger = logging.getLogger(__name__)
 
 
+def _invert_price(p: MarketPrice) -> MarketPrice:
+    """Swap YES and NO sides of a price (for teams_swapped events)."""
+    return MarketPrice(
+        yes_price=p.no_price,
+        no_price=p.yes_price,
+        yes_bid=round(1 - p.yes_ask, 4) if p.yes_ask is not None else p.no_bid,
+        yes_ask=round(1 - p.yes_bid, 4) if p.yes_bid is not None else p.no_ask,
+        no_bid=round(1 - p.no_ask, 4) if p.no_ask is not None else p.yes_bid,
+        no_ask=round(1 - p.no_bid, 4) if p.no_bid is not None else p.yes_ask,
+        volume=p.volume,
+        last_updated=p.last_updated,
+    )
+
+
 def _exec_buy_price(price: MarketPrice, side: str) -> float:
     """Executable price for buying YES or NO side.
 
@@ -50,6 +64,11 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
 
     pp = normalize_price(poly_market.price, Platform.POLYMARKET)
     kp = normalize_price(kalshi_market.price, Platform.KALSHI)
+
+    # If teams are swapped between platforms, invert Kalshi YES/NO
+    # so that YES on both platforms refers to the same team winning
+    if event.teams_swapped:
+        kp = _invert_price(kp)
 
     poly_url = poly_market.url or ""
     kalshi_url = kalshi_market.url or ""

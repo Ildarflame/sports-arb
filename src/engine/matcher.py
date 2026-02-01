@@ -625,6 +625,7 @@ def match_events(
 
         best_match: Market | None = None
         best_score: float = 0
+        best_swapped: bool = False
 
         for km in candidates:
             if km.market_id in used_kalshi:
@@ -644,13 +645,21 @@ def match_events(
             sport = pm.sport or km.sport or ""
 
             if pm.team_b and km.team_b:
-                # Both have two teams — match both, direct order only.
-                # team_a = YES team on both platforms ("Will X win?"),
-                # so swapped order would pair opposite outcomes (false arbs).
-                score = min(
+                # Both have two teams — check direct and swapped order.
+                direct_score = min(
                     team_similarity(pm.team_a, km.team_a, sport),
                     team_similarity(pm.team_b, km.team_b, sport),
                 )
+                swapped_score = min(
+                    team_similarity(pm.team_a, km.team_b, sport),
+                    team_similarity(pm.team_b, km.team_a, sport),
+                )
+                if swapped_score > direct_score:
+                    score = swapped_score
+                    is_swapped = True
+                else:
+                    score = direct_score
+                    is_swapped = False
             else:
                 # Polymarket has single team (futures market)
                 # Match against YES team on Kalshi
@@ -660,10 +669,12 @@ def match_events(
                     team_similarity(pm.team_a, km.team_b, sport),
                     team_similarity(pm.team_a, kalshi_yes_team, sport),
                 )
+                is_swapped = False  # N/A for single-team futures
 
             if score > best_score:
                 best_score = score
                 best_match = km
+                best_swapped = is_swapped
 
         # Use higher threshold for single-team matches (more prone to false positives)
         threshold = TEAM_MATCH_THRESHOLD if (pm.team_b and best_match and best_match.team_b) else SINGLE_TEAM_THRESHOLD
@@ -681,11 +692,13 @@ def match_events(
                     Platform.KALSHI: best_match,
                 },
                 matched=True,
+                teams_swapped=best_swapped,
             )
             matched_events.append(event)
             used_kalshi.add(best_match.market_id)
+            swap_tag = " SWAPPED" if best_swapped else ""
             logger.info(
-                f"Matched: {pm.title} <-> {best_match.title} "
+                f"Matched{swap_tag}: {pm.title} <-> {best_match.title} "
                 f"(score={best_score:.0f}, sport={pm.sport or '?'}/{best_match.sport or '?'})"
             )
 

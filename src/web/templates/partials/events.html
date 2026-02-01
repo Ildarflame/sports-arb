@@ -24,6 +24,9 @@
                 {% if event.team_b %} vs <strong>{{ event.team_b }}</strong>{% endif %}
                 {% if event.matched %}
                     <span class="badge badge-arb" style="margin-left: 4px; font-size: 0.6rem;">MATCHED</span>
+                    {% if event.teams_swapped %}
+                        <span class="badge" style="margin-left: 2px; font-size: 0.6rem; background: #f59e0b; color: #000;">SWAP</span>
+                    {% endif %}
                 {% endif %}
                 {% set game_date = (pm.game_date if pm and pm.game_date else None) or (km.game_date if km and km.game_date else None) %}
                 {% if game_date %}
@@ -70,14 +73,26 @@
             </td>
             <td>
                 {% if event.matched and pm and pm.price and km and km.price %}
+                    {# Invert Kalshi prices if teams are swapped between platforms #}
+                    {% if event.teams_swapped %}
+                        {% set k_yes_price = km.price.no_price %}
+                        {% set k_no_price = km.price.yes_price %}
+                        {% set k_yes_ask = (1.0 - km.price.yes_bid) if km.price.yes_bid else km.price.no_ask %}
+                        {% set k_yes_bid = (1.0 - km.price.yes_ask) if km.price.yes_ask else km.price.no_bid %}
+                    {% else %}
+                        {% set k_yes_price = km.price.yes_price %}
+                        {% set k_no_price = km.price.no_price %}
+                        {% set k_yes_ask = km.price.yes_ask %}
+                        {% set k_yes_bid = km.price.yes_bid %}
+                    {% endif %}
                     {# Direction 1: YES@Poly + NO@Kalshi — use executable prices #}
                     {% set py_exec = pm.price.yes_ask if pm.price.yes_ask else pm.price.yes_price %}
-                    {% set kn_exec = (1.0 - km.price.yes_bid) if km.price.yes_bid else km.price.no_price %}
+                    {% set kn_exec = (1.0 - k_yes_bid) if k_yes_bid else k_no_price %}
                     {% set cost1 = py_exec + kn_exec %}
                     {% set fee1 = py_exec * 0.02 + kn_exec * 0.015 %}
                     {% set roi1 = ((1.0 - cost1 - fee1) / (cost1 + fee1) * 100) if cost1 + fee1 > 0 else -100 %}
                     {# Direction 2: YES@Kalshi + NO@Poly — use executable prices #}
-                    {% set ky_exec = km.price.yes_ask if km.price.yes_ask else km.price.yes_price %}
+                    {% set ky_exec = k_yes_ask if k_yes_ask else k_yes_price %}
                     {% set pn_exec = (1.0 - pm.price.yes_bid) if pm.price.yes_bid else pm.price.no_price %}
                     {% set cost2 = ky_exec + pn_exec %}
                     {% set fee2 = ky_exec * 0.015 + pn_exec * 0.02 %}
