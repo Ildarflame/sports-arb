@@ -71,26 +71,49 @@
                 <div class="suspicious-banner">{{ d.get('suspicious_reason', 'Flagged as suspicious') }}</div>
             {% endif %}
             <div class="exec-steps">
+                {# Step 1: YES side #}
                 <div class="exec-step">
                     <span class="step-num">1</span>
-                    <span class="step-action">Buy YES</span> on {{ yes_plat_name }} at
-                    <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
-                    {% if is_exec %}(ask){% else %}(mid){% endif %}
+                    {% if yes_plat_name == 'Polymarket' %}
+                        <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_a }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
+                        ставишь на победу {{ opp.team_a }} по
+                        <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
+                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        <div class="step-hint">На Polymarket это YES-контракт на {{ opp.team_a }}. Если {{ opp.team_a }} победит &rarr; получишь $1.</div>
+                    {% else %}
+                        <span class="step-action">Kalshi:</span> Найди маркет <strong>&laquo;{{ opp.team_a }}&raquo;</strong> и нажми <strong>Yes</strong> по
+                        <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
+                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        <div class="step-hint">На Kalshi каждая команда &mdash; отдельный маркет с Yes/No. Тебе нужен именно Yes на {{ opp.team_a }}.</div>
+                    {% endif %}
                     {% if yes_url %}
-                    <div class="step-link"><a href="{{ yes_url }}" target="_blank" rel="noopener">Open {{ yes_plat_name }} &rarr;</a></div>
+                    <div class="step-link"><a href="{{ yes_url }}" target="_blank" rel="noopener">Открыть {{ yes_plat_name }} &rarr;</a></div>
                     {% endif %}
                 </div>
+                {# Step 2: NO side #}
                 <div class="exec-step">
                     <span class="step-num">2</span>
-                    <span class="step-action">Buy NO</span> on {{ no_plat_name }} at
-                    <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
-                    {% if is_exec %}(ask){% else %}(mid){% endif %}
+                    {% if no_plat_name == 'Polymarket' %}
+                        <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_b }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
+                        ставишь на победу {{ opp.team_b }} по
+                        <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
+                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        <div class="step-hint">Это то же самое что NO на {{ opp.team_a }}. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                    {% else %}
+                        <span class="step-action">Kalshi:</span> Найди маркет <strong>&laquo;{{ opp.team_a }}&raquo;</strong> и нажми <strong>No</strong> по
+                        <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
+                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        <div class="step-hint">Тот же маркет что в шаге 1, но кнопка No. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                    {% endif %}
                     {% if no_url %}
-                    <div class="step-link"><a href="{{ no_url }}" target="_blank" rel="noopener">Open {{ no_plat_name }} &rarr;</a></div>
+                    <div class="step-link"><a href="{{ no_url }}" target="_blank" rel="noopener">Открыть {{ no_plat_name }} &rarr;</a></div>
                     {% endif %}
                 </div>
                 <div class="exec-summary">
-                    Total: {{ "%.1f"|format(total * 100) }}c &rarr; Payout: 100c &rarr; Profit: +{{ "%.1f"|format((1.0 - total) * 100) }}c (+{{ "%.2f"|format(roi) }}%)
+                    <div class="exec-summary-why">
+                        Любой исход &rarr; одна из ставок платит $1. Вместе стоят {{ "%.1f"|format(total * 100) }}c &lt; 100c.
+                    </div>
+                    Итого: {{ "%.1f"|format(total * 100) }}c &rarr; Выплата: 100c &rarr; Профит: +{{ "%.1f"|format((1.0 - total) * 100) }}c (+{{ "%.2f"|format(roi) }}%)
                 </div>
             </div>
         </div>
