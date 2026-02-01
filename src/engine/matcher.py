@@ -277,7 +277,8 @@ _TEAM_ALIASES: dict[str, str] = {
 # Two tiers: safe to always strip (fc, sc...) and contextual (city, united — only at end)
 _SOCCER_STRIP_ALWAYS = re.compile(
     r"\s+(?:fc|sc|cf|ac|afc|bk|sk|fk|if|ff|ssc|as|ss|ssd"
-    r"|saudi club|club|hotspur|wanderers|albion|rovers|athletic|spor|sport)$",
+    r"|saudi club|saudi|club|hotspur|wanderers|albion|rovers|athletic|spor|sport"
+    r"|de madrid)$",
     re.IGNORECASE,
 )
 _SOCCER_STRIP_END = re.compile(
@@ -287,11 +288,12 @@ _SOCCER_STRIP_END = re.compile(
 # Common prefixes for European clubs: "AJ Auxerre" → "Auxerre"
 _SOCCER_STRIP_PREFIX = re.compile(
     r"^(?:aj|us|rc|ss|as|ac|fc|fk|sk|bk|if|ff|sc|cf|ssc|ssd|cd|ca|cs|ud|bv"
+    r"|tsg|tsv|sv|vfb|vfl|rb|rcd|spvgg|rayo"
     r"|real|sporting|racing|dynamo|dinamo|\d+\.)\s+",
     re.IGNORECASE,
 )
-# Year suffix: "Bologna FC 1909" → "Bologna FC"
-_YEAR_SUFFIX = re.compile(r"\s+\d{4}$")
+# Year suffix: "Bologna FC 1909" → "Bologna FC" (also matches mid-name like "TSG 1899 Hoffenheim")
+_YEAR_SUFFIX = re.compile(r"\s+\d{4}\b")
 # Umlaut mapping
 _UMLAUTS = str.maketrans({"ü": "u", "ö": "o", "ä": "a", "é": "e", "á": "a", "í": "i", "ó": "o", "ú": "u", "ñ": "n", "ç": "c", "ş": "s", "ı": "i", "ğ": "g", "ž": "z", "š": "s", "č": "c", "ř": "r", "ý": "y", "ą": "a", "ę": "e", "ł": "l", "ń": "n", "ś": "s", "ź": "z", "ż": "z"})
 
@@ -335,7 +337,7 @@ _NCAA_MASCOTS = re.compile(
 
 # European club aliases (common mismatches between platforms)
 _SOCCER_ALIASES: dict[str, str] = {
-    "atletico": "atletico madrid", "atletico madrid": "atletico madrid", "atletico de madrid": "atletico madrid", "club atletico madrid": "atletico madrid", "atl. madrid": "atletico madrid", "atl madrid": "atletico madrid",
+    "atletico": "atletico madrid", "atletico madrid": "atletico madrid", "atletico de madrid": "atletico madrid", "club atletico madrid": "atletico madrid", "club atletico": "atletico madrid", "atl. madrid": "atletico madrid", "atl madrid": "atletico madrid",
     "bayern munich": "bayern munchen", "bayern munchen": "bayern munchen", "bayern": "bayern munchen",
     "psg": "paris saint-germain", "paris saint germain": "paris saint-germain", "paris sg": "paris saint-germain",
     "inter": "inter milan", "inter milan": "inter milan", "internazionale": "inter milan", "internazionale milano": "inter milan",
@@ -430,6 +432,8 @@ _SOCCER_ALIASES: dict[str, str] = {
     "sevilla": "sevilla", "sevilla fc": "sevilla",
     "villarreal": "villarreal", "villarreal cf": "villarreal",
     "rayo vallecano": "rayo vallecano", "rayo": "rayo vallecano",
+    "vallecano madrid": "rayo vallecano", "vallecano": "rayo vallecano",
+    "real oviedo": "oviedo", "oviedo": "oviedo",
     "leganes": "leganes", "cd leganes": "leganes",
     "valencia": "valencia", "valencia cf": "valencia",
     # Portuguese clubs
