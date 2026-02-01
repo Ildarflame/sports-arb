@@ -24,6 +24,9 @@ SINGLE_TEAM_THRESHOLD = 93
 MAX_TIME_DIFF = timedelta(hours=6)
 # Maximum date difference (days) for game matching
 MAX_DATE_DIFF_DAYS = 1
+# Sports where platforms often disagree on dates (tournament start vs match day)
+_LENIENT_DATE_SPORTS = {"tennis", "table_tennis", "mma", "boxing", "golf"}
+MAX_DATE_DIFF_DAYS_LENIENT = 2
 
 # Mapping of event group aliases for cross-platform futures matching.
 # Keys are canonical group names; values are substrings that appear in
@@ -552,15 +555,17 @@ def team_similarity(a: str, b: str, sport: str = "") -> float:
 
 
 def _dates_compatible(pm: Market, km: Market, *, require_both: bool = False) -> bool:
-    """Check if two markets have compatible dates (±1 day).
+    """Check if two markets have compatible dates.
 
-    When require_both=True (game markets), both must have a date — returns
-    False if either is missing.  For futures (require_both=False), a missing
-    date is still allowed.
+    Uses ±1 day for most sports, ±2 days for tennis/MMA/golf where platforms
+    often disagree on dates (tournament start vs individual match day).
+    When require_both=True (game markets), both must have a date.
     """
     if pm.game_date and km.game_date:
         diff = abs((pm.game_date - km.game_date).days)
-        return diff <= MAX_DATE_DIFF_DAYS
+        sport = pm.sport or km.sport or ""
+        max_diff = MAX_DATE_DIFF_DAYS_LENIENT if sport in _LENIENT_DATE_SPORTS else MAX_DATE_DIFF_DAYS
+        return diff <= max_diff
     if require_both:
         return False
     return True
@@ -703,9 +708,12 @@ def match_events(
                     team_similarity(pm.team_a, km.team_b, sport),
                     team_similarity(pm.team_b, km.team_a, sport),
                 )
-                if swapped_score > direct_score and sport not in _THREE_OUTCOME_SPORTS:
+                if swapped_score > direct_score:
                     score = swapped_score
-                    is_swapped = True
+                    # For 3-outcome sports (soccer etc.), allow swapped team
+                    # ORDER for matching but do NOT flag teams_swapped — price
+                    # inversion is invalid when draws are possible.
+                    is_swapped = sport not in _THREE_OUTCOME_SPORTS
                 else:
                     score = direct_score
                     is_swapped = False
