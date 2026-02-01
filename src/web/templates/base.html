@@ -166,6 +166,156 @@
         .badge-sport-ncaa_mb { background: #ff6b35; }
         .badge-sport-ncaa_wb { background: #ff6b35; }
         .badge-sport-ncaa_fb { background: #ff6b35; }
+
+        /* Expandable arb cards */
+        .arb-card { border-bottom: 1px solid var(--border); }
+        .arb-card:last-child { border-bottom: none; }
+        .arb-card summary {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.6rem 0.4rem;
+            cursor: pointer;
+            list-style: none;
+            font-size: 0.82rem;
+            transition: background 0.15s;
+            flex-wrap: wrap;
+        }
+        .arb-card summary::-webkit-details-marker { display: none; }
+        .arb-card summary:hover { background: rgba(255,255,255,0.03); }
+        .arb-card[open] summary { border-bottom: 1px solid var(--border); }
+        .arb-card .expand-body {
+            padding: 0.8rem 0.4rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.2rem;
+            font-size: 0.78rem;
+        }
+        @media (max-width: 800px) {
+            .arb-card .expand-body { grid-template-columns: 1fr; }
+        }
+
+        /* Status dots */
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .dot-exec { background: var(--green); }
+        .dot-mid { background: var(--yellow); }
+        .dot-arb { background: var(--green); box-shadow: 0 0 4px var(--green); }
+
+        /* Arb summary parts */
+        .arb-event { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+        .arb-strategy { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; }
+        .arb-roi { font-weight: 700; color: var(--green); white-space: nowrap; }
+        .arb-cost { color: var(--text-dim); font-size: 0.75rem; white-space: nowrap; }
+        .arb-meta { display: flex; gap: 0.4rem; align-items: center; margin-left: auto; flex-shrink: 0; }
+        .arb-links { font-size: 0.7rem; }
+        .arb-links a { text-decoration: none; }
+
+        /* Micro badges */
+        .micro-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.6rem;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        .mb-exec { background: rgba(34,197,94,0.15); color: var(--green); }
+        .mb-mid { background: rgba(234,179,8,0.15); color: var(--yellow); }
+        .mb-vol-high { background: rgba(59,130,246,0.15); color: var(--blue); }
+        .mb-vol-low { background: rgba(156,163,175,0.15); color: var(--text-dim); }
+        .mb-spread-wide { background: rgba(239,68,68,0.15); color: var(--red); }
+        .mb-age { background: rgba(156,163,175,0.1); color: var(--text-dim); }
+
+        /* Execution steps */
+        .exec-steps { line-height: 1.8; }
+        .exec-step {
+            padding: 0.4rem 0;
+            border-bottom: 1px dashed rgba(255,255,255,0.06);
+        }
+        .exec-step:last-child { border-bottom: none; }
+        .exec-step .step-num {
+            display: inline-block;
+            width: 1.5rem;
+            height: 1.5rem;
+            line-height: 1.5rem;
+            text-align: center;
+            border-radius: 50%;
+            background: rgba(59,130,246,0.15);
+            color: var(--blue);
+            font-size: 0.7rem;
+            font-weight: 700;
+            margin-right: 0.4rem;
+        }
+        .exec-step .step-action { font-weight: 600; }
+        .exec-step .step-price { color: var(--green); }
+        .exec-step .step-link {
+            display: inline-block;
+            margin-top: 0.2rem;
+            margin-left: 1.9rem;
+            font-size: 0.72rem;
+        }
+        .exec-step .step-link a {
+            text-decoration: none;
+            padding: 2px 8px;
+            border-radius: 3px;
+            background: rgba(59,130,246,0.12);
+            color: var(--blue);
+        }
+        .exec-step .step-link a:hover { background: rgba(59,130,246,0.25); }
+        .exec-summary {
+            margin-top: 0.6rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+            background: rgba(34,197,94,0.08);
+            border: 1px solid rgba(34,197,94,0.2);
+            font-weight: 600;
+        }
+
+        /* Price grid */
+        .price-grid { width: 100%; }
+        .price-grid th, .price-grid td {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .price-grid th { color: var(--text-dim); font-weight: 500; text-align: right; }
+        .price-grid td { text-align: right; }
+        .price-grid .label-col { text-align: left; color: var(--text-dim); }
+        .price-grid .highlight { color: var(--green); font-weight: 600; }
+        .price-grid .slippage { color: var(--yellow); font-size: 0.7rem; }
+
+        /* Suspicious warning */
+        .arb-card.suspicious { border-left: 3px solid var(--red); opacity: 0.7; }
+        .arb-card.suspicious summary { color: var(--text-dim); }
+        .suspicious-banner {
+            padding: 0.3rem 0.6rem;
+            font-size: 0.72rem;
+            color: var(--red);
+            background: rgba(239,68,68,0.08);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        /* ROI filter buttons */
+        .roi-filters {
+            display: flex;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+        .roi-btn {
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--text-dim);
+            background: transparent;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .roi-btn:hover { border-color: var(--blue); color: var(--text); }
+        .roi-btn.active { background: var(--blue); color: white; border-color: var(--blue); }
     </style>
 </head>
 <body>

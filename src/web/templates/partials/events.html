@@ -3,10 +3,9 @@
     <thead>
         <tr>
             <th>Event</th>
-            <th>Polymarket YES</th>
-            <th>Polymarket NO</th>
-            <th>Kalshi YES</th>
-            <th>Kalshi NO</th>
+            <th>Polymarket</th>
+            <th>Kalshi</th>
+            <th>Volume</th>
             <th>ROI (w/ fees)</th>
         </tr>
     </thead>
@@ -16,6 +15,9 @@
         {% set km = event.markets.get(Platform.KALSHI) %}
         <tr>
             <td>
+                {% if arb_teams is defined and event.team_a in arb_teams %}
+                    <span class="dot dot-arb" style="width:6px;height:6px;vertical-align:middle;margin-right:4px" title="Active arb"></span>
+                {% endif %}
                 {% set sport = (pm.sport if pm else '') or (km.sport if km else '') %}
                 {% if sport %}
                     <span class="badge badge-sport badge-sport-{{ sport }}">{{ sport|upper }}</span>
@@ -45,35 +47,29 @@
             </td>
             <td>
                 {% if pm and pm.price %}
-                    <span class="badge badge-poly">{{ "%.1f"|format(pm.price.yes_price * 100) }}c</span>
-                {% else %}
-                    <span style="color: var(--text-dim)">--</span>
-                {% endif %}
-            </td>
-            <td>
-                {% if pm and pm.price %}
-                    {{ "%.1f"|format(pm.price.no_price * 100) }}c
+                    <span class="badge badge-poly">{{ "%.0f"|format(pm.price.yes_price * 100) }}</span>/<span style="color:var(--text-dim)">{{ "%.0f"|format(pm.price.no_price * 100) }}c</span>
                 {% else %}
                     <span style="color: var(--text-dim)">--</span>
                 {% endif %}
             </td>
             <td>
                 {% if km and km.price %}
-                    <span class="badge badge-kalshi">{{ "%.1f"|format(km.price.yes_price * 100) }}c</span>
+                    <span class="badge badge-kalshi">{{ "%.0f"|format(km.price.yes_price * 100) }}</span>/<span style="color:var(--text-dim)">{{ "%.0f"|format(km.price.no_price * 100) }}c</span>
                 {% else %}
                     <span style="color: var(--text-dim)">--</span>
                 {% endif %}
             </td>
-            <td>
-                {% if km and km.price %}
-                    {{ "%.1f"|format(km.price.no_price * 100) }}c
+            <td style="font-size: 0.75rem; color: var(--text-dim);">
+                {% if pm and pm.price and pm.price.volume %}
+                    ${{ "{:,.0f}".format(pm.price.volume) }}
+                {% elif km and km.price and km.price.volume %}
+                    ${{ "{:,.0f}".format(km.price.volume) }}
                 {% else %}
-                    <span style="color: var(--text-dim)">--</span>
+                    --
                 {% endif %}
             </td>
             <td>
                 {% if event.matched and pm and pm.price and km and km.price %}
-                    {# Invert Kalshi prices if teams are swapped between platforms #}
                     {% if event.teams_swapped %}
                         {% set k_yes_price = km.price.no_price %}
                         {% set k_no_price = km.price.yes_price %}
@@ -85,13 +81,11 @@
                         {% set k_yes_ask = km.price.yes_ask %}
                         {% set k_yes_bid = km.price.yes_bid %}
                     {% endif %}
-                    {# Direction 1: YES@Poly + NO@Kalshi — use executable prices #}
                     {% set py_exec = pm.price.yes_ask if pm.price.yes_ask else pm.price.yes_price %}
                     {% set kn_exec = (1.0 - k_yes_bid) if k_yes_bid else k_no_price %}
                     {% set cost1 = py_exec + kn_exec %}
                     {% set fee1 = py_exec * 0.02 + kn_exec * 0.015 %}
                     {% set roi1 = ((1.0 - cost1 - fee1) / (cost1 + fee1) * 100) if cost1 + fee1 > 0 else -100 %}
-                    {# Direction 2: YES@Kalshi + NO@Poly — use executable prices #}
                     {% set ky_exec = k_yes_ask if k_yes_ask else k_yes_price %}
                     {% set pn_exec = (1.0 - pm.price.yes_bid) if pm.price.yes_bid else pm.price.no_price %}
                     {% set cost2 = ky_exec + pn_exec %}

@@ -56,8 +56,8 @@ def _compute_best_roi(event) -> float:
     return max(roi1, roi2)
 
 
-def _filter_and_sort_events(events: list, sport: str = "") -> list:
-    """Filter events by sport and sort: matched by ROI desc, then Kalshi-only."""
+def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None = None) -> list:
+    """Filter events by sport/min_roi and sort: matched by ROI desc, then Kalshi-only."""
     if sport:
         events = [e for e in events if _get_event_sport(e) == sport]
 
@@ -67,29 +67,48 @@ def _filter_and_sort_events(events: list, sport: str = "") -> list:
     # Sort matched events by best ROI descending
     matched.sort(key=lambda e: _compute_best_roi(e), reverse=True)
 
+    if min_roi is not None:
+        matched = [e for e in matched if _compute_best_roi(e) >= min_roi]
+        unmatched = []  # Hide unmatched when filtering by ROI
+
     return matched + unmatched
 
 
-def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
-    """Keep only the latest non-suspicious opportunity per (team_a, platform_buy_yes, platform_buy_no) key."""
-    seen: dict[tuple, dict] = {}
-    for opp in opportunities:
-        # Filter out suspicious opportunities
-        details = opp.get("details")
-        if isinstance(details, dict) and details.get("suspicious"):
-            continue
-        if isinstance(details, str):
-            try:
-                d = json.loads(details)
-                if d.get("suspicious"):
-                    continue
-            except (json.JSONDecodeError, TypeError):
-                pass
+def _parse_opp_details(opp: dict) -> dict:
+    """Ensure opp['details'] is a parsed dict, not a JSON string."""
+    details = opp.get("details")
+    if isinstance(details, str):
+        try:
+            opp["details"] = json.loads(details)
+        except (json.JSONDecodeError, TypeError):
+            opp["details"] = {}
+    elif not isinstance(details, dict):
+        opp["details"] = {}
+    return opp
 
+
+def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
+    """Dedupe opportunities per key. Suspicious ones are kept but sorted to the end."""
+    seen: dict[tuple, dict] = {}
+    suspicious_seen: dict[tuple, dict] = {}
+    for opp in opportunities:
+        _parse_opp_details(opp)
+        details = opp["details"]
         key = (opp.get("team_a", ""), opp.get("platform_buy_yes", ""), opp.get("platform_buy_no", ""))
+
+        if details.get("suspicious"):
+            if key not in suspicious_seen:
+                suspicious_seen[key] = opp
+        else:
+            if key not in seen:
+                seen[key] = opp
+
+    # Normal opps first, suspicious at the end (exclude suspicious that already have a clean version)
+    result = list(seen.values())
+    for key, opp in suspicious_seen.items():
         if key not in seen:
-            seen[key] = opp
-    return list(seen.values())
+            result.append(opp)
+    return result
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -99,7 +118,12 @@ async def dashboard(request: Request):
     from src.state import app_state
     events = app_state.get("matched_events", [])
     sport = request.query_params.get("sport", "")
-    events = _filter_and_sort_events(events, sport)
+    min_roi_param = request.query_params.get("min_roi", "-5")
+    try:
+        min_roi = float(min_roi_param) if min_roi_param != "all" else None
+    except ValueError:
+        min_roi = -5.0
+    events = _filter_and_sort_events(events, sport, min_roi=min_roi)
 
     # Collect available sports for filter buttons
     all_events = app_state.get("matched_events", [])
@@ -110,6 +134,11 @@ async def dashboard(request: Request):
             sports_set.add(s)
     available_sports = sorted(sports_set)
 
+    # Build set of team_a names that have active arb opportunities
+    arb_teams: set[str] = set()
+    for opp in opportunities:
+        arb_teams.add(opp.get("team_a", ""))
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -118,7 +147,9 @@ async def dashboard(request: Request):
             "events": events,
             "last_update": datetime.now(UTC).strftime("%H:%M:%S UTC"),
             "current_sport": sport,
+            "current_min_roi": min_roi_param,
             "available_sports": available_sports,
+            "arb_teams": arb_teams,
             "poly_count": app_state.get("poly_count", 0),
             "kalshi_count": app_state.get("kalshi_count", 0),
             "last_scan_duration": app_state.get("last_scan_duration", 0),
@@ -160,10 +191,23 @@ async def partial_events(request: Request):
     from src.state import app_state
     events = app_state.get("matched_events", [])
     sport = request.query_params.get("sport", "")
-    events = _filter_and_sort_events(events, sport)
+    min_roi_param = request.query_params.get("min_roi", "-5")
+    try:
+        min_roi = float(min_roi_param) if min_roi_param != "all" else None
+    except ValueError:
+        min_roi = -5.0
+    events = _filter_and_sort_events(events, sport, min_roi=min_roi)
+
+    # Build arb_teams set for the green dot indicator
+    opportunities = await db.get_active_opportunities(limit=50)
+    opportunities = _dedupe_opportunities(opportunities)
+    arb_teams: set[str] = set()
+    for opp in opportunities:
+        arb_teams.add(opp.get("team_a", ""))
+
     return templates.TemplateResponse(
         "partials/events.html",
-        {"request": request, "events": events},
+        {"request": request, "events": events, "arb_teams": arb_teams},
     )
 
 

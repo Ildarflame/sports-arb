@@ -1,59 +1,160 @@
 {% if opportunities %}
-<table>
-    <thead>
-        <tr>
-            <th>Event</th>
-            <th>Strategy</th>
-            <th>YES Price</th>
-            <th>NO Price</th>
-            <th>Total Cost</th>
-            <th>ROI</th>
-            <th>Found</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for opp in opportunities %}
-        {% set d = opp.details if opp.details is mapping else (opp.details | from_json if opp.details is string else {}) %}
-        <tr>
-            <td>
-                <strong>{{ opp.team_a }}</strong> vs <strong>{{ opp.team_b }}</strong>
-                <br>
-                <span style="font-size: 0.7rem;">
-                    {% if d.poly_url %}
-                        <a href="{{ d.poly_url }}" target="_blank" rel="noopener" style="color: #8b5cf6; text-decoration: none;">Poly ↗</a>
+{% for opp in opportunities %}
+{% set d = opp.details if opp.details is mapping else {} %}
+{% set is_suspicious = d.get('suspicious', false) %}
+{% set is_exec = d.get('executable', false) %}
+{# Determine direction and prices #}
+{% set buy_yes_plat = opp.platform_buy_yes|default('')|upper %}
+{% set buy_no_plat = opp.platform_buy_no|default('')|upper %}
+{# Executable buy prices (ask) #}
+{% if buy_yes_plat == 'POLYMARKET' %}
+    {% set yes_buy_price = d.get('poly_yes_ask') or opp.yes_price %}
+    {% set yes_mid = d.get('poly_yes') or opp.yes_price %}
+    {% set no_buy_price = d.get('kalshi_yes_ask') %}
+    {# For NO on Kalshi: we buy NO = 1 - YES_bid, or just use opp.no_price #}
+    {% set no_buy_price = opp.no_price if not d.get('kalshi_yes_bid') else (1.0 - d.get('kalshi_yes_bid')) %}
+    {% set no_mid = d.get('kalshi_no') or opp.no_price %}
+    {% set yes_url = d.get('poly_url', '') %}
+    {% set no_url = d.get('kalshi_url', '') %}
+    {% set yes_fee_pct = 2.0 %}
+    {% set no_fee_pct = 1.5 %}
+    {% set yes_plat_name = 'Polymarket' %}
+    {% set no_plat_name = 'Kalshi' %}
+{% else %}
+    {% set yes_buy_price = d.get('kalshi_yes_ask') or opp.yes_price %}
+    {% set yes_mid = d.get('kalshi_yes') or opp.yes_price %}
+    {% set no_buy_price = opp.no_price if not d.get('poly_yes_bid') else (1.0 - d.get('poly_yes_bid')) %}
+    {% set no_mid = d.get('poly_no') or opp.no_price %}
+    {% set yes_url = d.get('kalshi_url', '') %}
+    {% set no_url = d.get('poly_url', '') %}
+    {% set yes_fee_pct = 1.5 %}
+    {% set no_fee_pct = 2.0 %}
+    {% set yes_plat_name = 'Kalshi' %}
+    {% set no_plat_name = 'Polymarket' %}
+{% endif %}
+{% set total = opp.total_cost if opp.total_cost else 0 %}
+{% set roi = opp.roi_after_fees if opp.roi_after_fees else 0 %}
+{% set exec_cost = d.get('exec_cost') %}
+{% set mid_cost = d.get('midpoint_cost') %}
+{# Volume badges #}
+{% set pvol = d.get('poly_volume') %}
+{% set kvol = d.get('kalshi_volume') %}
+{# Age from found_at #}
+{% set found = opp.found_at if opp.found_at is string else '' %}
+
+<details class="arb-card {{ 'suspicious' if is_suspicious else '' }}">
+    <summary>
+        <span class="dot {{ 'dot-exec' if is_exec else 'dot-mid' }}" title="{{ 'Executable bid/ask prices' if is_exec else 'Midpoint estimate' }}"></span>
+        <span class="arb-event">{{ opp.team_a }} vs {{ opp.team_b }}</span>
+        <span class="arb-strategy">YES@{{ buy_yes_plat }} + NO@{{ buy_no_plat }}</span>
+        <span class="arb-cost">{{ "%.1f"|format(total * 100) }}c</span>
+        <span class="arb-roi">+{{ "%.2f"|format(roi) }}%</span>
+        <span class="arb-meta">
+            <span class="micro-badge {{ 'mb-exec' if is_exec else 'mb-mid' }}">{{ 'EXEC' if is_exec else 'MID' }}</span>
+            {% if pvol is not none and pvol > 10000 %}
+                <span class="micro-badge mb-vol-high" title="Poly vol: ${{ "%.0f"|format(pvol) }}">VOL</span>
+            {% elif pvol is not none %}
+                <span class="micro-badge mb-vol-low" title="Poly vol: ${{ "%.0f"|format(pvol) }}">LOW</span>
+            {% endif %}
+            {% if d.get('spread_pct') is not none and d.get('spread_pct') > 10 %}
+                <span class="micro-badge mb-spread-wide" title="Spread: {{ "%.0f"|format(d.get('spread_pct')) }}%">WIDE</span>
+            {% endif %}
+            {% if found %}
+                <span class="micro-badge mb-age">{{ found }}</span>
+            {% endif %}
+        </span>
+    </summary>
+    <div class="expand-body">
+        {# Left: How to execute #}
+        <div>
+            {% if is_suspicious %}
+                <div class="suspicious-banner">{{ d.get('suspicious_reason', 'Flagged as suspicious') }}</div>
+            {% endif %}
+            <div class="exec-steps">
+                <div class="exec-step">
+                    <span class="step-num">1</span>
+                    <span class="step-action">Buy YES</span> on {{ yes_plat_name }} at
+                    <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
+                    {% if is_exec %}(ask){% else %}(mid){% endif %}
+                    {% if yes_url %}
+                    <div class="step-link"><a href="{{ yes_url }}" target="_blank" rel="noopener">Open {{ yes_plat_name }} &rarr;</a></div>
                     {% endif %}
-                    {% if d.poly_url and d.kalshi_url %} · {% endif %}
-                    {% if d.kalshi_url %}
-                        <a href="{{ d.kalshi_url }}" target="_blank" rel="noopener" style="color: #10b981; text-decoration: none;">Kalshi ↗</a>
+                </div>
+                <div class="exec-step">
+                    <span class="step-num">2</span>
+                    <span class="step-action">Buy NO</span> on {{ no_plat_name }} at
+                    <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
+                    {% if is_exec %}(ask){% else %}(mid){% endif %}
+                    {% if no_url %}
+                    <div class="step-link"><a href="{{ no_url }}" target="_blank" rel="noopener">Open {{ no_plat_name }} &rarr;</a></div>
                     {% endif %}
-                </span>
-            </td>
-            <td>
-                <span class="badge badge-arb">
-                    YES@{{ opp.platform_buy_yes|upper }} + NO@{{ opp.platform_buy_no|upper }}
-                </span>
-            </td>
-            <td>{{ "%.1f"|format(opp.yes_price * 100 if opp.yes_price is number else opp.get('yes_price', 0) * 100) }}c</td>
-            <td>{{ "%.1f"|format(opp.no_price * 100 if opp.no_price is number else opp.get('no_price', 0) * 100) }}c</td>
-            <td>{{ "%.1f"|format(opp.total_cost * 100 if opp.total_cost is number else opp.get('total_cost', 0) * 100) }}c</td>
-            <td class="arb-positive">
-                +{{ "%.2f"|format(opp.roi_after_fees if opp.roi_after_fees is number else opp.get('roi_after_fees', 0)) }}%
-                {% if opp.roi_after_fees is number and opp.roi_after_fees > 100 %}
-                    <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
+                </div>
+                <div class="exec-summary">
+                    Total: {{ "%.1f"|format(total * 100) }}c &rarr; Payout: 100c &rarr; Profit: +{{ "%.1f"|format((1.0 - total) * 100) }}c (+{{ "%.2f"|format(roi) }}%)
+                </div>
+            </div>
+        </div>
+        {# Right: Price verification grid #}
+        <div>
+            <table class="price-grid">
+                <tr>
+                    <th class="label-col"></th>
+                    <th>Polymarket</th>
+                    <th>Kalshi</th>
+                </tr>
+                <tr>
+                    <td class="label-col">YES bid</td>
+                    <td>{{ "%.1f"|format(d.get('poly_yes_bid') * 100) + 'c' if d.get('poly_yes_bid') else '--' }}</td>
+                    <td>{{ "%.1f"|format(d.get('kalshi_yes_bid') * 100) + 'c' if d.get('kalshi_yes_bid') else '--' }}</td>
+                </tr>
+                <tr>
+                    <td class="label-col">YES ask</td>
+                    <td>{{ "%.1f"|format(d.get('poly_yes_ask') * 100) + 'c' if d.get('poly_yes_ask') else '--' }}</td>
+                    <td>{{ "%.1f"|format(d.get('kalshi_yes_ask') * 100) + 'c' if d.get('kalshi_yes_ask') else '--' }}</td>
+                </tr>
+                <tr>
+                    <td class="label-col">YES mid</td>
+                    <td>{{ "%.1f"|format(d.get('poly_yes') * 100) + 'c' if d.get('poly_yes') else '--' }}</td>
+                    <td>{{ "%.1f"|format(d.get('kalshi_yes') * 100) + 'c' if d.get('kalshi_yes') else '--' }}</td>
+                </tr>
+                <tr>
+                    <td class="label-col">NO mid</td>
+                    <td>{{ "%.1f"|format(d.get('poly_no') * 100) + 'c' if d.get('poly_no') else '--' }}</td>
+                    <td>{{ "%.1f"|format(d.get('kalshi_no') * 100) + 'c' if d.get('kalshi_no') else '--' }}</td>
+                </tr>
+                {% if d.get('spread_pct') is not none %}
+                <tr>
+                    <td class="label-col">Spread</td>
+                    <td colspan="2">{{ "%.1f"|format(d.get('spread_pct')) }}%</td>
+                </tr>
                 {% endif %}
-                {% if d.executable %}
-                    <span style="color:#10b981;font-size:0.6rem" title="Calculated from bid/ask executable prices">EXEC</span>
-                {% else %}
-                    <span style="color:#ff6b6b;font-size:0.6rem" title="Midpoint estimate — real cost may differ">MID</span>
+                <tr>
+                    <td class="label-col">Volume</td>
+                    <td>{{ '$' + "{:,.0f}".format(pvol) if pvol else '--' }}</td>
+                    <td>{{ '$' + "{:,.0f}".format(kvol) if kvol else '--' }}</td>
+                </tr>
+                {% if mid_cost %}
+                <tr>
+                    <td class="label-col">Mid cost</td>
+                    <td colspan="2">{{ "%.1f"|format(mid_cost * 100) }}c</td>
+                </tr>
                 {% endif %}
-            </td>
-            <td style="color: var(--text-dim); font-size: 0.75rem;">
-                {{ opp.found_at if opp.found_at is string else opp.get('found_at', '') }}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+                {% if exec_cost %}
+                <tr>
+                    <td class="label-col">Exec cost</td>
+                    <td colspan="2">
+                        <span class="highlight">{{ "%.1f"|format(exec_cost * 100) }}c</span>
+                        {% if mid_cost %}
+                            <span class="slippage">(+{{ "%.1f"|format((exec_cost - mid_cost) * 100) }}c slippage)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+</details>
+{% endfor %}
 {% else %}
 <div class="empty-state">
     <p>No arbitrage opportunities detected yet.</p>

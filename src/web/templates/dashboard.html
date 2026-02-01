@@ -51,10 +51,18 @@
     </div>
 
     <div class="card" id="events-panel"
-         hx-get="/partials/events{% if current_sport %}?sport={{ current_sport }}{% endif %}"
+         hx-get="/partials/events?sport={{ current_sport }}&amp;min_roi={{ current_min_roi }}"
          hx-trigger="sse:update"
          hx-swap="innerHTML">
         <h2>Matched Events</h2>
+        <div class="roi-filters">
+            <a href="/?sport={{ current_sport }}&min_roi=-5"
+               class="roi-btn {{ 'active' if current_min_roi == '-5' or current_min_roi is not defined else '' }}">ROI &gt; -5%</a>
+            <a href="/?sport={{ current_sport }}&min_roi=0"
+               class="roi-btn {{ 'active' if current_min_roi == '0' else '' }}">Profitable</a>
+            <a href="/?sport={{ current_sport }}&min_roi=all"
+               class="roi-btn {{ 'active' if current_min_roi == 'all' else '' }}">All</a>
+        </div>
         {% include "partials/events.html" %}
     </div>
 </div>
