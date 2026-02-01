@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="metrics">
+    <div class="metric">
+        <div class="metric-value" id="matched-count">{{ events|length }}</div>
+        <div class="metric-label">Matched Events</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value arb-positive" id="arb-count">{{ opportunities|length }}</div>
+        <div class="metric-label">Active Arbs</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">
+            {% if opportunities %}
+                {{ "%.2f"|format(opportunities[0].get('roi_after_fees', 0) if opportunities[0] is mapping else 0) }}%
+            {% else %}
+                --
+            {% endif %}
+        </div>
+        <div class="metric-label">Best ROI</div>
+    </div>
+</div>
+
+<div class="grid">
+    <div class="card" id="alerts-panel"
+         hx-get="/partials/alerts"
+         hx-trigger="sse:update"
+         hx-swap="innerHTML">
+        <h2>Arbitrage Opportunities</h2>
+        {% include "partials/alerts.html" %}
+    </div>
+
+    <div class="card" id="events-panel"
+         hx-get="/partials/events"
+         hx-trigger="sse:update"
+         hx-swap="innerHTML">
+        <h2>Matched Events</h2>
+        {% include "partials/events.html" %}
+    </div>
+</div>
+
+{% endblock %}

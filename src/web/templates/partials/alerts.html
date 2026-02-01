@@ -1,0 +1,46 @@
+{% if opportunities %}
+<table>
+    <thead>
+        <tr>
+            <th>Event</th>
+            <th>Strategy</th>
+            <th>YES Price</th>
+            <th>NO Price</th>
+            <th>Total Cost</th>
+            <th>ROI</th>
+            <th>Found</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for opp in opportunities %}
+        <tr>
+            <td>
+                <strong>{{ opp.team_a }}</strong> vs <strong>{{ opp.team_b }}</strong>
+            </td>
+            <td>
+                <span class="badge badge-arb">
+                    YES@{{ opp.platform_buy_yes|upper }} + NO@{{ opp.platform_buy_no|upper }}
+                </span>
+            </td>
+            <td>{{ "%.1f"|format(opp.yes_price * 100 if opp.yes_price is number else opp.get('yes_price', 0) * 100) }}c</td>
+            <td>{{ "%.1f"|format(opp.no_price * 100 if opp.no_price is number else opp.get('no_price', 0) * 100) }}c</td>
+            <td>{{ "%.1f"|format(opp.total_cost * 100 if opp.total_cost is number else opp.get('total_cost', 0) * 100) }}c</td>
+            <td class="arb-positive">
+                +{{ "%.2f"|format(opp.roi_after_fees if opp.roi_after_fees is number else opp.get('roi_after_fees', 0)) }}%
+                {% set details = opp.details if opp.details is mapping else opp.get('details', {}) %}
+                {% if details.get('suspicious') %}
+                    <span style="color: #ff6b6b; font-size: 0.7rem;" title="Possibly stale or illiquid prices">⚠</span>
+                {% endif %}
+            </td>
+            <td style="color: var(--text-dim); font-size: 0.75rem;">
+                {{ opp.found_at if opp.found_at is string else opp.get('found_at', '') }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No arbitrage opportunities detected yet.</p>
+</div>
+{% endif %}

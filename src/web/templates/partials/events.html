@@ -1,0 +1,81 @@
+{% if events %}
+<table>
+    <thead>
+        <tr>
+            <th>Event</th>
+            <th>Polymarket YES</th>
+            <th>Polymarket NO</th>
+            <th>Kalshi YES</th>
+            <th>Kalshi NO</th>
+            <th>ROI (w/ fees)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for event in events %}
+        <tr>
+            <td>
+                <strong>{{ event.team_a }}</strong>
+                {% if event.team_b %} vs <strong>{{ event.team_b }}</strong>{% endif %}
+                {% if event.matched %}
+                    <span class="badge badge-arb" style="margin-left: 4px; font-size: 0.6rem;">MATCHED</span>
+                {% endif %}
+            </td>
+            <td>
+                {% set pm = event.markets.get(Platform.POLYMARKET) %}
+                {% if pm and pm.price %}
+                    <span class="badge badge-poly">{{ "%.1f"|format(pm.price.yes_price * 100) }}c</span>
+                {% else %}
+                    <span style="color: var(--text-dim)">--</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if pm and pm.price %}
+                    {{ "%.1f"|format(pm.price.no_price * 100) }}c
+                {% else %}
+                    <span style="color: var(--text-dim)">--</span>
+                {% endif %}
+            </td>
+            <td>
+                {% set km = event.markets.get(Platform.KALSHI) %}
+                {% if km and km.price %}
+                    <span class="badge badge-kalshi">{{ "%.1f"|format(km.price.yes_price * 100) }}c</span>
+                {% else %}
+                    <span style="color: var(--text-dim)">--</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if km and km.price %}
+                    {{ "%.1f"|format(km.price.no_price * 100) }}c
+                {% else %}
+                    <span style="color: var(--text-dim)">--</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if event.matched and pm and pm.price and km and km.price %}
+                    {# Direction 1: YES@Poly + NO@Kalshi #}
+                    {% set cost1 = pm.price.yes_price + km.price.no_price %}
+                    {% set fee1 = pm.price.yes_price * 0.02 + km.price.no_price * 0.015 %}
+                    {% set roi1 = ((1.0 - cost1 - fee1) / (cost1 + fee1) * 100) if cost1 + fee1 > 0 else -100 %}
+                    {# Direction 2: YES@Kalshi + NO@Poly #}
+                    {% set cost2 = km.price.yes_price + pm.price.no_price %}
+                    {% set fee2 = km.price.yes_price * 0.015 + pm.price.no_price * 0.02 %}
+                    {% set roi2 = ((1.0 - cost2 - fee2) / (cost2 + fee2) * 100) if cost2 + fee2 > 0 else -100 %}
+                    {% set best_roi = [roi1, roi2]|max %}
+                    <span class="{{ 'arb-positive' if best_roi > 0 else 'arb-negative' }}">
+                        {{ "%+.1f"|format(best_roi) }}%
+                    </span>
+                {% elif not event.matched %}
+                    <span style="color: var(--text-dim); font-size: 0.75rem;">Kalshi only</span>
+                {% else %}
+                    <span style="color: var(--text-dim)">--</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No events yet. Scanning markets...</p>
+</div>
+{% endif %}
