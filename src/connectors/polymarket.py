@@ -54,8 +54,8 @@ _POLY_SPORT_KEYWORDS: dict[str, str] = {
     "table tennis": "table_tennis", "ping pong": "table_tennis",
     "tgl": "golf", "dp world": "golf",
     "swiss super league": "soccer", "swiss league": "soccer",
-    "cs2": "esports", "lol": "esports", "valorant": "esports", "dota": "esports",
-    "league of legends": "esports",
+    "cs2": "esports", "counter-strike": "esports", "lol": "esports",
+    "valorant": "esports", "dota": "esports", "league of legends": "esports",
     # Olympics
     "winter olympics": "olympics", "summer olympics": "olympics", "olympic": "olympics",
     # Futures-specific keywords (Fix 5)
