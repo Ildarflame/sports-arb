@@ -30,6 +30,9 @@ POLY_CACHE_TTL = 300    # 5 minutes
 # Concurrency limiter for price fetches
 _price_semaphore = asyncio.Semaphore(10)
 
+# Token → event mapping for O(1) WS price application
+_token_to_event: dict[str, SportEvent] = {}
+
 
 async def _fetch_with_semaphore(coro):
     """Run a coroutine with semaphore-limited concurrency."""
@@ -80,8 +83,13 @@ async def fetch_and_update_prices(
     individual_tasks: list[tuple[str, SportEvent, str, asyncio.Task]] = []
 
     for event, market_id in poly_neg_risk_ids:
+        pm = event.markets.get(Platform.POLYMARKET)
+        clob_ids = pm.raw_data.get("clob_token_ids", []) if pm else []
+        clob_token_id = clob_ids[0] if clob_ids else None
         task = asyncio.ensure_future(
-            _fetch_with_semaphore(poly.fetch_price(market_id, neg_risk=True))
+            _fetch_with_semaphore(
+                poly.fetch_price(market_id, neg_risk=True, clob_token_id=clob_token_id)
+            )
         )
         individual_tasks.append(("poly", event, market_id, task))
 
@@ -157,6 +165,85 @@ def broadcast_event(event_type: str, data: dict) -> None:
     _broadcast(event_type, data)
 
 
+async def ws_price_listener(poly: PolymarketConnector) -> None:
+    """Background task: consume Polymarket WS price stream and update cache.
+
+    Reconnects when the subscription set changes (new matched events) or on
+    connection errors. The 5-min full refetch remains as fallback — WS is an
+    acceleration layer, not a replacement.
+    """
+    _last_sub_snapshot: set[str] = set()
+
+    while app_state["running"]:
+        subscribed = app_state["ws_subscribed_ids"]
+        if not subscribed:
+            await asyncio.sleep(2)
+            continue
+        try:
+            token_list = list(subscribed)
+            _last_sub_snapshot = set(subscribed)
+            logger.info(f"Polymarket WS: subscribing to {len(token_list)} tokens")
+            async for token_id, price in poly.subscribe_prices(token_list):
+                if not app_state["running"]:
+                    break
+                app_state["ws_price_cache"][token_id] = price
+                app_state["ws_update_count"] += 1
+                # Live-update the event if mapped
+                event = _token_to_event.get(token_id)
+                if event:
+                    pm = event.markets.get(Platform.POLYMARKET)
+                    if pm and pm.price:
+                        # Preserve bid/ask from book fetch, only update midpoint
+                        pm.price.yes_price = price.yes_price
+                        pm.price.no_price = price.no_price
+                        pm.price.last_updated = price.last_updated
+                    elif pm:
+                        pm.price = price
+                # Check if subscription set changed — reconnect to pick up new tokens
+                if app_state["ws_subscribed_ids"] != _last_sub_snapshot:
+                    logger.info("WS subscription set changed, reconnecting...")
+                    break
+        except Exception:
+            logger.exception("WS price listener error, restarting...")
+            await asyncio.sleep(5)
+
+
+def _update_ws_subscriptions(events: list[SportEvent]) -> None:
+    """Refresh WS subscription set and token→event mapping from matched events."""
+    _token_to_event.clear()
+    new_ids: set[str] = set()
+    for event in events:
+        pm = event.markets.get(Platform.POLYMARKET)
+        if not pm:
+            continue
+        token_ids = pm.raw_data.get("clob_token_ids", [])
+        if token_ids:
+            tid = token_ids[0]
+            new_ids.add(tid)
+            _token_to_event[tid] = event
+    old_count = len(app_state["ws_subscribed_ids"])
+    app_state["ws_subscribed_ids"] = new_ids
+    if len(new_ids) != old_count:
+        logger.info(f"WS subscriptions updated: {old_count} → {len(new_ids)} tokens")
+
+
+def _apply_ws_cache(events: list[SportEvent]) -> int:
+    """Apply cached WS prices to events before price fetching. Returns count updated."""
+    ws_cache = app_state["ws_price_cache"]
+    if not ws_cache:
+        return 0
+    updated = 0
+    for event in events:
+        pm = event.markets.get(Platform.POLYMARKET)
+        if not pm or pm.price:
+            continue  # already has a price, skip
+        token_ids = pm.raw_data.get("clob_token_ids", [])
+        if token_ids and token_ids[0] in ws_cache:
+            pm.price = ws_cache[token_ids[0]]
+            updated += 1
+    return updated
+
+
 async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
     """Main scanning loop: fetch events, match, check arbitrage."""
     while app_state["running"]:
@@ -210,7 +297,15 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             matched = match_events(poly_markets, kalshi_markets)
             app_state["matched_events"] = matched
 
+            # Update WS subscriptions with current matched token_ids
+            _update_ws_subscriptions(matched)
+
             if matched:
+                # Pass 0.5: Apply any cached WS prices before full fetch
+                ws_applied = _apply_ws_cache(matched)
+                if ws_applied:
+                    logger.info(f"WS cache: applied {ws_applied} cached prices")
+
                 # Pass 1: Fetch midpoint prices for all matched events
                 await fetch_and_update_prices(poly, kalshi, matched)
 
@@ -336,11 +431,12 @@ async def run_app() -> None:
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    # Run web server and scan loop concurrently
+    # Run web server, scan loop, and WS price listener concurrently
     try:
         await asyncio.gather(
             server.serve(),
             scan_loop(poly, kalshi),
+            ws_price_listener(poly),
         )
     finally:
         await poly.disconnect()

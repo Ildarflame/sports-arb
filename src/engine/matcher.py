@@ -551,12 +551,18 @@ def team_similarity(a: str, b: str, sport: str = "") -> float:
     return fuzz.token_sort_ratio(na, nb)
 
 
-def _dates_compatible(pm: Market, km: Market) -> bool:
-    """Check if two game markets have compatible dates (±1 day)."""
+def _dates_compatible(pm: Market, km: Market, *, require_both: bool = False) -> bool:
+    """Check if two markets have compatible dates (±1 day).
+
+    When require_both=True (game markets), both must have a date — returns
+    False if either is missing.  For futures (require_both=False), a missing
+    date is still allowed.
+    """
     if pm.game_date and km.game_date:
         diff = abs((pm.game_date - km.game_date).days)
         return diff <= MAX_DATE_DIFF_DAYS
-    # If either lacks a date, allow match (best-effort)
+    if require_both:
+        return False
     return True
 
 
@@ -674,9 +680,9 @@ def match_events(
             if km.market_id in used_kalshi:
                 continue
 
-            # Date filter for games
+            # Date filter for games — require both dates present
             if pm.market_type == "game" and km.market_type == "game":
-                if not _dates_compatible(pm, km):
+                if not _dates_compatible(pm, km, require_both=True):
                     continue
 
             # Group filter for futures

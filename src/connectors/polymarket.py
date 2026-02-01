@@ -32,6 +32,40 @@ _POLY_SPORT_KEYWORDS: dict[str, str] = {
     "atp": "tennis", "wta": "tennis", "grand slam": "tennis",
     "french open": "tennis", "wimbledon": "tennis", "us open tennis": "tennis",
     "australian open": "tennis",
+    # ATP/WTA tournament names for individual match detection
+    "transylvania open": "tennis", "ostrava open": "tennis",
+    "abu dhabi open": "tennis", "adelaide international": "tennis",
+    "brisbane international": "tennis", "qatar open": "tennis",
+    "dubai open": "tennis", "dubai tennis": "tennis",
+    "indian wells": "tennis", "miami open": "tennis",
+    "monte carlo": "tennis", "madrid open": "tennis",
+    "rome open": "tennis", "italian open": "tennis",
+    "halle open": "tennis", "queen's club": "tennis",
+    "canadian open": "tennis", "cincinnati open": "tennis",
+    "shanghai masters": "tennis", "vienna open": "tennis",
+    "basel open": "tennis", "paris masters": "tennis",
+    "roland garros": "tennis", "open sud": "tennis",
+    "open 13": "tennis", "lyon open": "tennis",
+    "montpellier open": "tennis", "marseille open": "tennis",
+    "dallas open": "tennis", "delray beach": "tennis",
+    "los cabos open": "tennis", "atlanta open": "tennis",
+    "washington open": "tennis", "winston-salem": "tennis",
+    "stockholm open": "tennis", "antwerp open": "tennis",
+    "metz open": "tennis", "korea open": "tennis",
+    "japan open": "tennis", "china open": "tennis",
+    "hong kong open": "tennis", "auckland open": "tennis",
+    "hobart international": "tennis", "linz open": "tennis",
+    "doha open": "tennis", "stuttgart open": "tennis",
+    "berlin open": "tennis", "eastbourne international": "tennis",
+    "nottingham open": "tennis", "birmingham classic": "tennis",
+    "san diego open": "tennis", "guadalajara open": "tennis",
+    "zhengzhou open": "tennis", "wuhan open": "tennis",
+    "beijing open": "tennis", "moscow open": "tennis",
+    "nitto atp finals": "tennis", "wta finals": "tennis",
+    "davis cup": "tennis", "billie jean king cup": "tennis",
+    "united cup": "tennis", "laver cup": "tennis",
+    "round of 128": "tennis", "round of 64": "tennis",
+    "round of 32": "tennis", "round of 16": "tennis",
     "cricket": "cricket", "icc": "cricket", "ipl": "cricket", "test match": "cricket",
     "t20": "cricket", "ashes": "cricket",
     # Compound cricket keywords (longer than "world cup" so they win in sorted order)
@@ -99,6 +133,12 @@ def _detect_sport_poly(event_title: str, tags: list[str] | None = None) -> str:
     for keyword, sport in _POLY_SPORT_KEYWORDS_SORTED:
         if keyword in text:
             return sport
+
+    # Fallback: tennis tournament pattern — "X Open:" or "X Masters:" in parenthetical
+    if re.search(r"\b\w+\s+open\s*:", text):
+        return "tennis"
+    if re.search(r"\b\w+\s+masters\s*:", text) and "golf" not in text and "pga" not in text:
+        return "tennis"
 
     # Fallback: soccer club suffixes in title
     if re.search(r"\b(fc|sc|afc|cf)\b", text):
@@ -507,9 +547,30 @@ class PolymarketConnector(BaseConnector):
 
         return ""
 
-    async def fetch_price(self, market_id: str, *, neg_risk: bool = False) -> MarketPrice | None:
-        """Fetch price — CLOB midpoint for normal markets, Gamma API for negRisk."""
+    async def fetch_price(
+        self, market_id: str, *, neg_risk: bool = False, clob_token_id: str | None = None,
+    ) -> MarketPrice | None:
+        """Fetch price — CLOB midpoint for normal markets, Gamma API for negRisk.
+
+        When clob_token_id is provided for a negRisk market, try CLOB first
+        (gets real midpoint from order book) and fall back to Gamma if CLOB fails.
+        """
         if neg_risk:
+            if clob_token_id:
+                try:
+                    resp = await self._clob.get("/midpoint", params={"token_id": clob_token_id})
+                    resp.raise_for_status()
+                    data = resp.json()
+                    mid = float(data.get("mid", 0))
+                    if mid > 0:
+                        logger.debug(f"CLOB midpoint for negRisk {clob_token_id[:20]}: {mid}")
+                        return MarketPrice(
+                            yes_price=mid,
+                            no_price=round(1 - mid, 4),
+                            last_updated=datetime.now(UTC),
+                        )
+                except Exception:
+                    logger.debug(f"CLOB midpoint failed for negRisk {clob_token_id[:20]}, falling back to Gamma")
             return await self._fetch_price_gamma(market_id)
         try:
             resp = await self._clob.get("/midpoint", params={"token_id": market_id})
