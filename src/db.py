@@ -73,7 +73,43 @@ class Database:
         if self._db:
             await self._db.close()
 
+    async def find_active_by_key(
+        self, team_a: str, platform_yes: str, platform_no: str,
+    ) -> dict | None:
+        """Find an existing active opportunity for the same team/platform pair."""
+        cursor = await self._db.execute(
+            """SELECT * FROM opportunities
+               WHERE still_active = 1
+                 AND team_a = ? AND platform_buy_yes = ? AND platform_buy_no = ?
+               ORDER BY found_at DESC LIMIT 1""",
+            (team_a, platform_yes, platform_no),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def save_opportunity(self, opp: ArbitrageOpportunity) -> str:
+        # Dedup: update existing active arb for same key instead of inserting
+        existing = await self.find_active_by_key(
+            opp.team_a, opp.platform_buy_yes.value, opp.platform_buy_no.value,
+        )
+        if existing:
+            opp.id = existing["id"]
+            await self._db.execute(
+                """UPDATE opportunities
+                   SET yes_price = ?, no_price = ?, total_cost = ?,
+                       profit_pct = ?, roi_after_fees = ?,
+                       found_at = ?, details = ?
+                   WHERE id = ?""",
+                (
+                    opp.yes_price, opp.no_price, opp.total_cost,
+                    opp.profit_pct, opp.roi_after_fees,
+                    opp.found_at.isoformat(), json.dumps(opp.details),
+                    opp.id,
+                ),
+            )
+            await self._db.commit()
+            return opp.id
+
         if not opp.id:
             opp.id = uuid.uuid4().hex[:12]
         await self._db.execute(
@@ -111,6 +147,17 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_active_opp_keys(self) -> dict[tuple[str, str, str], str]:
+        """Return mapping of (team_a, platform_yes, platform_no) -> opp_id for active opps."""
+        cursor = await self._db.execute(
+            "SELECT id, team_a, platform_buy_yes, platform_buy_no FROM opportunities WHERE still_active = 1"
+        )
+        rows = await cursor.fetchall()
+        return {
+            (r["team_a"], r["platform_buy_yes"], r["platform_buy_no"]): r["id"]
+            for r in rows
+        }
 
     async def deactivate_opportunity(self, opp_id: str) -> None:
         await self._db.execute(

@@ -125,6 +125,47 @@
         }
         .metric-value { font-size: 1.5rem; font-weight: 700; }
         .metric-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 0.25rem; text-transform: uppercase; }
+        .sport-filters {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .filter-btn {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--text-dim);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .filter-btn:hover { border-color: var(--blue); color: var(--text); }
+        .filter-btn.active { background: var(--blue); color: white; border-color: var(--blue); }
+        .badge-sport {
+            font-size: 0.6rem;
+            padding: 1px 6px;
+            border-radius: 3px;
+            margin-right: 4px;
+            color: white;
+        }
+        .badge-sport-nba { background: #c9082a; }
+        .badge-sport-nfl { background: #013369; }
+        .badge-sport-nhl { background: #111; }
+        .badge-sport-mlb { background: #002d72; }
+        .badge-sport-soccer { background: #00a86b; }
+        .badge-sport-tennis { background: #cfb53b; color: #111; }
+        .badge-sport-mma { background: #d20a13; }
+        .badge-sport-esports { background: #7c3aed; }
+        .badge-sport-cricket { background: #1e7a3f; }
+        .badge-sport-golf { background: #2d5a27; }
+        .badge-sport-motorsport { background: #e10600; }
+        .badge-sport-ncaa_mb { background: #ff6b35; }
+        .badge-sport-ncaa_wb { background: #ff6b35; }
+        .badge-sport-ncaa_fb { background: #ff6b35; }
     </style>
 </head>
 <body>

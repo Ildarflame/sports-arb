@@ -28,6 +28,7 @@ _KALSHI_SPORT_MAP: dict[str, str] = {
     "KXFOPENMENSINGLE": "tennis", "KXWIMBLEDONMENSINGLE": "tennis",
     "KXAUSOPENMENSINGLE": "tennis", "KXUSOPENMENSINGLE": "tennis",
     "KXCS2": "esports", "KXLOL": "esports", "KXVALORANT": "esports", "KXDOTA2": "esports",
+    "KXCRICKET": "cricket", "KXIPL": "cricket", "KXICC": "cricket",
 }
 
 

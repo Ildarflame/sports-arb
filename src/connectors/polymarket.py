@@ -31,6 +31,12 @@ _POLY_SPORT_KEYWORDS: dict[str, str] = {
     "atp": "tennis", "wta": "tennis", "grand slam": "tennis",
     "french open": "tennis", "wimbledon": "tennis", "us open tennis": "tennis",
     "australian open": "tennis",
+    "cricket": "cricket", "icc": "cricket", "ipl": "cricket", "test match": "cricket",
+    "t20": "cricket", "ashes": "cricket",
+    "copa": "soccer", "europa league": "soccer", "carabao": "soccer",
+    "fa cup": "soccer", "eredivisie": "soccer", "liga mx": "soccer", "j-league": "soccer",
+    "pga": "golf", "lpga": "golf", "masters": "golf",
+    "f1": "motorsport", "formula": "motorsport", "nascar": "motorsport",
     "cs2": "esports", "lol": "esports", "valorant": "esports", "dota": "esports",
     "league of legends": "esports",
 }
@@ -136,6 +142,15 @@ class PolymarketConnector(BaseConnector):
                     event_tags = [t.get("label", t) if isinstance(t, dict) else str(t)
                                   for t in event.get("tags", [])]
                     sport = _detect_sport_poly(event_title, event_tags)
+
+                    # Fallback: try to detect sport from individual market questions
+                    if not sport:
+                        for _m in event_markets:
+                            q = _m.get("question", "")
+                            if q:
+                                sport = _detect_sport_poly(q)
+                                if sport:
+                                    break
 
                     for m in event_markets:
                         sports_type = m.get("sportsMarketType", "")

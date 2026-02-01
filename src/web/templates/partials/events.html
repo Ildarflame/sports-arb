@@ -12,17 +12,25 @@
     </thead>
     <tbody>
         {% for event in events %}
+        {% set pm = event.markets.get(Platform.POLYMARKET) %}
+        {% set km = event.markets.get(Platform.KALSHI) %}
         <tr>
             <td>
+                {% set sport = (pm.sport if pm else '') or (km.sport if km else '') %}
+                {% if sport %}
+                    <span class="badge badge-sport badge-sport-{{ sport }}">{{ sport|upper }}</span>
+                {% endif %}
                 <strong>{{ event.team_a }}</strong>
                 {% if event.team_b %} vs <strong>{{ event.team_b }}</strong>{% endif %}
                 {% if event.matched %}
                     <span class="badge badge-arb" style="margin-left: 4px; font-size: 0.6rem;">MATCHED</span>
                 {% endif %}
+                {% set game_date = (pm.game_date if pm and pm.game_date else None) or (km.game_date if km and km.game_date else None) %}
+                {% if game_date %}
+                    <span style="color: var(--text-dim); font-size: 0.7rem; margin-left: 6px;">{{ game_date.strftime('%b %d') }}</span>
+                {% endif %}
                 <br>
                 <span style="font-size: 0.7rem;">
-                    {% set pm = event.markets.get(Platform.POLYMARKET) %}
-                    {% set km = event.markets.get(Platform.KALSHI) %}
                     {% if pm and pm.url %}
                         <a href="{{ pm.url }}" target="_blank" rel="noopener" style="color: #8b5cf6; text-decoration: none;" title="Open on Polymarket">Poly ↗</a>
                     {% endif %}

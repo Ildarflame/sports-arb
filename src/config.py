@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     port: int = 8000
     poll_interval: int = 10
     min_arb_percent: float = 0.5
+    max_arb_percent: float = 50.0
+    min_volume: int = 0
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

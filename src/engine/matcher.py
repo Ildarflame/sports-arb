@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import defaultdict
 from datetime import timedelta
@@ -65,6 +66,15 @@ EVENT_GROUP_ALIASES: dict[str, list[str]] = {
     "us_open_tennis": ["US Open", "KXUSOPENMENSINGLE"],
     # MMA
     "ufc_champ": ["UFC", "KXUFCCHAMP"],
+    # Additional soccer
+    "fa_cup": ["FA Cup", "KXFACUP"],
+    "carabao": ["Carabao Cup", "League Cup", "EFL Cup", "KXCARABAOCUP"],
+    "europa": ["Europa League", "KXEUROPALEAGUE"],
+    "conference": ["Conference League", "KXCONFERENCELEAGUE"],
+    "copa_america": ["Copa America", "KXCOPAAMERICA"],
+    "gold_cup": ["Gold Cup", "KXGOLDCUP"],
+    "mls_champ": ["MLS Cup", "KXMLSCUP"],
+    "liga_mx": ["Liga MX", "KXLIGAMX"],
 }
 
 # Build reverse lookup: substring -> canonical group
@@ -118,10 +128,27 @@ def _dates_compatible(pm: Market, km: Market) -> bool:
     return True
 
 
+def _is_group_stage(text: str) -> bool:
+    """Check if text indicates a group-stage market."""
+    return bool(re.search(r"\bgroup\b", text, re.IGNORECASE))
+
+
+def _is_tournament_winner(text: str) -> bool:
+    """Check if text indicates a tournament-winner/champion market."""
+    return bool(re.search(r"\b(winner|champion|champ)\b", text, re.IGNORECASE))
+
+
 def _groups_compatible(pm: Market, km: Market) -> bool:
     """Check if two futures markets belong to the same event group."""
-    pg = _canonicalize_event_group(pm.event_group)
-    kg = _canonicalize_event_group(km.event_group)
+    # Reject group-stage vs tournament-winner mismatches
+    pg_text = pm.event_group or ""
+    kg_text = km.event_group or ""
+    if (_is_group_stage(pg_text) and _is_tournament_winner(kg_text)) or \
+       (_is_tournament_winner(pg_text) and _is_group_stage(kg_text)):
+        return False
+
+    pg = _canonicalize_event_group(pg_text)
+    kg = _canonicalize_event_group(kg_text)
     if pg and kg:
         return pg == kg
     # If either lacks a group, allow match (best-effort)

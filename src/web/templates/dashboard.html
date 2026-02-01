@@ -20,6 +20,25 @@
         </div>
         <div class="metric-label">Best ROI</div>
     </div>
+    <div class="metric">
+        <div class="metric-value">{{ poly_count }}</div>
+        <div class="metric-label">Poly Markets</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ kalshi_count }}</div>
+        <div class="metric-label">Kalshi Markets</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ "%.1f"|format(last_scan_duration) }}s</div>
+        <div class="metric-label">Scan Time</div>
+    </div>
+</div>
+
+<div class="sport-filters">
+    <a href="/" class="filter-btn {{ 'active' if not current_sport else '' }}">All</a>
+    {% for sport in available_sports %}
+        <a href="/?sport={{ sport }}" class="filter-btn {{ 'active' if current_sport == sport else '' }}">{{ sport|upper }}</a>
+    {% endfor %}
 </div>
 
 <div class="grid">
@@ -32,7 +51,7 @@
     </div>
 
     <div class="card" id="events-panel"
-         hx-get="/partials/events"
+         hx-get="/partials/events{% if current_sport %}?sport={{ current_sport }}{% endif %}"
          hx-trigger="sse:update"
          hx-swap="innerHTML">
         <h2>Matched Events</h2>
