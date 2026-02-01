@@ -189,7 +189,7 @@ _NHL_ALIASES: dict[str, str] = {
     "penguins": "pittsburgh penguins", "pens": "pittsburgh penguins", "pittsburgh": "pittsburgh penguins",
     "blues": "st. louis blues", "st louis": "st. louis blues", "st. louis": "st. louis blues",
     "canucks": "vancouver canucks", "vancouver": "vancouver canucks",
-    "islanders": "new york islanders",
+    "islanders": "new york islanders", "new york i": "new york islanders",
     "predators": "nashville predators", "preds": "nashville predators", "nashville": "nashville predators",
     "senators": "ottawa senators", "sens": "ottawa senators", "ottawa": "ottawa senators",
     "blackhawks": "chicago blackhawks", "chicago": "chicago blackhawks",
@@ -288,12 +288,34 @@ _YEAR_SUFFIX = re.compile(r"\s+\d{4}$")
 # Umlaut mapping
 _UMLAUTS = str.maketrans({"ü": "u", "ö": "o", "ä": "a", "é": "e", "á": "a", "í": "i", "ó": "o", "ú": "u", "ñ": "n", "ç": "c", "ş": "s", "ı": "i", "ğ": "g", "ž": "z", "š": "s", "č": "c", "ř": "r", "ý": "y", "ą": "a", "ę": "e", "ł": "l", "ń": "n", "ś": "s", "ź": "z", "ż": "z"})
 
+# Esports game suffixes to strip from team names
+_ESPORTS_GAME_SUFFIXES = re.compile(
+    r"\s+(?:valorant|league of legends|dota\s*2|counter\s*strike|cs2|csgo|overwatch|rocket league|table tennis)$",
+    re.IGNORECASE,
+)
+
+# NCAA mascot names to strip (common D1 mascots appended by Polymarket)
+_NCAA_MASCOTS = re.compile(
+    r"\s+(?:cardinals|demons|bulldogs|wildcats|tigers|bears|eagles|falcons|hawks|huskies"
+    r"|cougars|mustangs|knights|warriors|lions|panthers|wolves|rams|spartans|trojans"
+    r"|gators|seminoles|crimson tide|volunteers|sooners|longhorns|buckeyes|wolverines"
+    r"|jayhawks|tar heels|cavaliers|hokies|cyclones|boilermakers|hoosiers|badgers"
+    r"|golden gophers|fighting irish|blue devils|orange|terrapins|nittany lions"
+    r"|razorbacks|commodores|gamecocks|rebels|aggies|owls|bruins|beavers|ducks"
+    r"|sun devils|buffaloes|mountaineers|red raiders|horned frogs|bearcats|shockers"
+    r"|gaels|zags|gonzaga bulldogs|blue jays|friars|musketeers|pirates|johnnies"
+    r"|peacocks|billikens|explorers|bonnies|dukes|monarchs|49ers|roadrunners"
+    r"|thundering herd|mean green|bobcats|hilltoppers|red wolves|chanticleers"
+    r"|paladins|catamounts|phoenix|lumberjacks|antelopes|flames|penguins|leathernecks)$",
+    re.IGNORECASE,
+)
+
 # European club aliases (common mismatches between platforms)
 _SOCCER_ALIASES: dict[str, str] = {
     "atletico": "atletico madrid", "atletico madrid": "atletico madrid", "atletico de madrid": "atletico madrid", "club atletico madrid": "atletico madrid", "atl. madrid": "atletico madrid", "atl madrid": "atletico madrid",
     "bayern munich": "bayern munchen", "bayern munchen": "bayern munchen", "bayern": "bayern munchen",
     "psg": "paris saint-germain", "paris saint germain": "paris saint-germain", "paris sg": "paris saint-germain",
-    "inter": "inter milan", "inter milan": "inter milan", "internazionale": "inter milan",
+    "inter": "inter milan", "inter milan": "inter milan", "internazionale": "inter milan", "internazionale milano": "inter milan",
     "ac milan": "milan", "milan": "milan",
     "man city": "manchester city", "man utd": "manchester united", "man united": "manchester united",
     "spurs": "tottenham",
@@ -307,7 +329,7 @@ _SOCCER_ALIASES: dict[str, str] = {
     "celta vigo": "celta vigo", "celta de vigo": "celta vigo", "celta": "celta vigo",
     "1. fc cologne": "fc koln", "fc koln": "fc koln", "koln": "fc koln", "cologne": "fc koln",
     "rb leipzig": "leipzig", "leipzig": "leipzig", "rasenballsport leipzig": "leipzig",
-    "monchengladbach": "borussia monchengladbach", "gladbach": "borussia monchengladbach", "bmg": "borussia monchengladbach",
+    "monchengladbach": "borussia monchengladbach", "gladbach": "borussia monchengladbach", "bmg": "borussia monchengladbach", "m'gladbach": "borussia monchengladbach", "mgladbach": "borussia monchengladbach",
     "dortmund": "borussia dortmund", "bvb": "borussia dortmund", "borussia dortmund": "borussia dortmund", "bv borussia 09 dortmund": "borussia dortmund",
     "leverkusen": "bayer leverkusen", "bayer leverkusen": "bayer leverkusen",
     "hertha": "hertha berlin", "hertha bsc": "hertha berlin",
@@ -332,6 +354,91 @@ _SOCCER_ALIASES: dict[str, str] = {
     "alaves": "alaves", "deportivo alaves": "alaves",
     "angers": "angers", "angers sco": "angers",
     "mallorca": "mallorca", "rcd mallorca": "mallorca",
+    # German clubs
+    "hamburg": "hamburger sv", "hamburger sv": "hamburger sv", "hsv": "hamburger sv",
+    "st pauli": "st pauli", "st. pauli": "st pauli", "fc st pauli": "st pauli",
+    "schalke": "schalke 04", "schalke 04": "schalke 04", "fc schalke 04": "schalke 04",
+    "stuttgart": "vfb stuttgart", "vfb stuttgart": "vfb stuttgart",
+    "wolfsburg": "vfl wolfsburg", "vfl wolfsburg": "vfl wolfsburg",
+    "freiburg": "freiburg", "sc freiburg": "freiburg",
+    "hoffenheim": "hoffenheim", "tsg hoffenheim": "hoffenheim",
+    "mainz": "mainz", "mainz 05": "mainz", "1. fsv mainz 05": "mainz",
+    "heidenheim": "heidenheim", "fc heidenheim": "heidenheim", "1. fc heidenheim": "heidenheim",
+    "augsburg": "augsburg", "fc augsburg": "augsburg",
+    "bochum": "vfl bochum", "vfl bochum": "vfl bochum",
+    "werder bremen": "werder bremen", "bremen": "werder bremen",
+    "union berlin": "union berlin", "1. fc union berlin": "union berlin",
+    "eintracht frankfurt": "eintracht frankfurt", "frankfurt": "eintracht frankfurt",
+    "kaiserslautern": "kaiserslautern", "1. fc kaiserslautern": "kaiserslautern",
+    "greuther furth": "greuther furth", "spvgg greuther furth": "greuther furth",
+    "dusseldorf": "fortuna dusseldorf", "fortuna dusseldorf": "fortuna dusseldorf",
+    # French clubs
+    "lille": "lille", "lille osc": "lille", "losc lille": "lille",
+    "nice": "nice", "ogc nice": "nice",
+    "rennes": "stade rennais", "stade rennais": "stade rennais",
+    "strasbourg": "strasbourg", "rc strasbourg": "strasbourg",
+    "nantes": "nantes", "fc nantes": "nantes",
+    "lens": "lens", "rc lens": "lens",
+    "brest": "stade brestois", "stade brestois": "stade brestois",
+    "reims": "stade reims", "stade reims": "stade reims", "stade de reims": "stade reims",
+    "montpellier": "montpellier", "montpellier hsc": "montpellier",
+    "toulouse": "toulouse", "toulouse fc": "toulouse",
+    "auxerre": "auxerre", "aj auxerre": "auxerre",
+    # Italian clubs
+    "juventus": "juventus", "juve": "juventus",
+    "torino": "torino", "torino fc": "torino",
+    "udinese": "udinese", "udinese calcio": "udinese",
+    "bologna": "bologna", "bologna fc": "bologna",
+    "empoli": "empoli", "empoli fc": "empoli",
+    "cagliari": "cagliari", "cagliari calcio": "cagliari",
+    "lecce": "lecce", "us lecce": "lecce",
+    "monza": "monza", "ac monza": "monza",
+    "parma": "parma", "parma calcio": "parma",
+    "venezia": "venezia", "venezia fc": "venezia",
+    "sampdoria": "sampdoria", "uc sampdoria": "sampdoria",
+    "sassuolo": "sassuolo", "us sassuolo": "sassuolo",
+    # Spanish clubs
+    "valladolid": "valladolid", "real valladolid": "valladolid",
+    "getafe": "getafe", "getafe cf": "getafe",
+    "osasuna": "osasuna", "ca osasuna": "osasuna",
+    "girona": "girona", "girona fc": "girona",
+    "las palmas": "las palmas", "ud las palmas": "las palmas",
+    "espanyol": "espanyol", "rcd espanyol": "espanyol",
+    "sevilla": "sevilla", "sevilla fc": "sevilla",
+    "villarreal": "villarreal", "villarreal cf": "villarreal",
+    "rayo vallecano": "rayo vallecano", "rayo": "rayo vallecano",
+    "leganes": "leganes", "cd leganes": "leganes",
+    "valencia": "valencia", "valencia cf": "valencia",
+    # Portuguese clubs
+    "benfica": "benfica", "sl benfica": "benfica",
+    "porto": "porto", "fc porto": "porto",
+    "sporting cp": "sporting lisbon", "sporting lisbon": "sporting lisbon", "sporting": "sporting lisbon",
+    "braga": "braga", "sc braga": "braga",
+    # Dutch clubs
+    "psv": "psv eindhoven", "psv eindhoven": "psv eindhoven",
+    "ajax": "ajax", "afc ajax": "ajax",
+    "feyenoord": "feyenoord",
+    "az alkmaar": "az alkmaar", "az": "az alkmaar",
+    # Turkish clubs
+    "galatasaray": "galatasaray",
+    "fenerbahce": "fenerbahce",
+    "besiktas": "besiktas",
+    "trabzonspor": "trabzonspor",
+    # Scottish clubs
+    "celtic": "celtic", "celtic fc": "celtic",
+    "rangers": "rangers", "rangers fc": "rangers",
+    # Belgian clubs
+    "club brugge": "club brugge", "brugge": "club brugge",
+    "anderlecht": "anderlecht", "rsc anderlecht": "anderlecht",
+    # MLS clubs
+    "la galaxy": "la galaxy", "los angeles galaxy": "la galaxy",
+    "lafc": "los angeles fc", "los angeles fc": "los angeles fc",
+    "nycfc": "new york city fc", "new york city fc": "new york city fc",
+    "ny red bulls": "new york red bulls", "new york red bulls": "new york red bulls",
+    "inter miami": "inter miami", "inter miami cf": "inter miami",
+    "atlanta united": "atlanta united", "atlanta utd": "atlanta united",
+    # Real Sociedad full name
+    "real sociedad futbol": "real sociedad", "sociedad futbol": "real sociedad",
 }
 
 
@@ -343,10 +450,28 @@ def normalize_team_name(name: str, sport: str = "") -> str:
     Then strips common suffixes like FC/SC/Hotspur/Wanderers for soccer teams.
     """
     name = name.lower().strip()
+    # Normalize special chars: acute accent (´), backtick, curly quotes
+    name = name.replace("´", "'").replace("`", "'").replace("\u2018", "'").replace("\u2019", "'")
     # Normalize dashes and umlauts
     name = name.replace("-", " ")
     name = name.translate(_UMLAUTS)
     name = " ".join(name.split())
+    # Strip esports game suffixes: "Karmine Corp Valorant" → "Karmine Corp"
+    if sport in ("esports", "table_tennis"):
+        name = _ESPORTS_GAME_SUFFIXES.sub("", name).strip()
+    # Strip NCAA mascots: "Incarnate Word Cardinals" → "Incarnate Word"
+    if sport in ("ncaa_mb", "ncaa_wb", "ncaa_fb"):
+        prev = name
+        name = _NCAA_MASCOTS.sub("", name).strip()
+        # Only strip mascot if something remains
+        if len(name) < 3:
+            name = prev
+    # Normalize "St." — in NCAA context it usually means "State", elsewhere "Saint"
+    if sport in ("ncaa_mb", "ncaa_wb", "ncaa_fb"):
+        name = re.sub(r"\bst\.(?:\s|$)", "state ", name).strip()
+    else:
+        name = re.sub(r"\bst\.(?:\s|$)", "saint ", name).strip()
+    name = re.sub(r"\bmt\.(?:\s|$)", "mount ", name).strip()
     # Check sport-specific aliases first (resolves city ambiguity)
     sport_aliases = _SPORT_ALIASES.get(sport, {})
     if sport_aliases and name in sport_aliases:
@@ -394,6 +519,14 @@ def team_similarity(a: str, b: str, sport: str = "") -> float:
     # Try exact match first
     if na == nb:
         return 100
+    # Tennis/individual sports: one platform may use "First Last", other just "Last"
+    # If one name is a single token and matches the last token of the other, it's a match
+    if sport in ("tennis", "table_tennis", "ufc", "boxing", "golf"):
+        parts_a, parts_b = na.split(), nb.split()
+        if len(parts_a) == 1 and len(parts_b) > 1 and parts_a[0] == parts_b[-1]:
+            return 98
+        if len(parts_b) == 1 and len(parts_a) > 1 and parts_b[0] == parts_a[-1]:
+            return 98
     # Token sort ratio handles word order differences
     return fuzz.token_sort_ratio(na, nb)
 
