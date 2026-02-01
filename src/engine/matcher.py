@@ -296,17 +296,33 @@ _ESPORTS_GAME_SUFFIXES = re.compile(
 
 # NCAA mascot names to strip (common D1 mascots appended by Polymarket)
 _NCAA_MASCOTS = re.compile(
-    r"\s+(?:cardinals|demons|bulldogs|wildcats|tigers|bears|eagles|falcons|hawks|huskies"
+    r"\s+(?:cardinals|cardinal|demons|bulldogs|wildcats|tigers|bears|eagles|falcons|hawks|huskies"
     r"|cougars|mustangs|knights|warriors|lions|panthers|wolves|rams|spartans|trojans"
     r"|gators|seminoles|crimson tide|volunteers|sooners|longhorns|buckeyes|wolverines"
     r"|jayhawks|tar heels|cavaliers|hokies|cyclones|boilermakers|hoosiers|badgers"
-    r"|golden gophers|fighting irish|blue devils|orange|terrapins|nittany lions"
+    r"|golden gophers|golden bears|golden lions|fighting irish|fighting illini|blue devils|orange|terrapins|nittany lions"
     r"|razorbacks|commodores|gamecocks|rebels|aggies|owls|bruins|beavers|ducks"
     r"|sun devils|buffaloes|mountaineers|red raiders|horned frogs|bearcats|shockers"
     r"|gaels|zags|gonzaga bulldogs|blue jays|friars|musketeers|pirates|johnnies"
     r"|peacocks|billikens|explorers|bonnies|dukes|monarchs|49ers|roadrunners"
     r"|thundering herd|mean green|bobcats|hilltoppers|red wolves|chanticleers"
-    r"|paladins|catamounts|phoenix|lumberjacks|antelopes|flames|penguins|leathernecks)$",
+    r"|paladins|catamounts|phoenix|lumberjacks|antelopes|flames|penguins|leathernecks"
+    # Additional mascots found from live Polymarket data
+    r"|cornhuskers|hawkeyes|yellow jackets|wolf pack|golden hurricane|green wave"
+    r"|fighting camels|fightin' blue hens|golden griffins|golden grizzlies"
+    r"|bison|broncos|broncs|buccaneers|bulls|bluejays|braves|blazers"
+    r"|chippewas|colonials|crusaders|chargers|dragons|flyers|hoyas"
+    r"|jaguars|jaspers|lancers|leopards|mocs|norse|pacers|patriots|pioneers"
+    r"|privateers|ramblers|rattlers|red flash|red foxes|red storm|redhawks"
+    r"|revolutionaries|rockets|roos|saints|salukis|seahawks|seawolves"
+    r"|spiders|stags|terriers|tribe|utes|vaqueros|warhawks|zips"
+    r"|aces|beacons|bearkats|blue hose|mastodons|shock|sycamores|redbirds"
+    r"|bengals|colonels|dolphins|governors|highlanders|miners|skyhawks"
+    r"|cowboys|raiders|vikings|toreros|dons|waves|pilots|anteaters"
+    r"|gauchos|retrievers|matadors|ospreys|texans|tritons|islanders"
+    r"|tommies|keydets|greyhounds|griffins|racers|midshipmen|lobos|aztecs"
+    r"|demon deacons|wolfpack|big red|big green|crimson|pride|gladiators"
+    r"|hurricanes|hoosiers|scarlet knights|yellow jackets|commodores)$",
     re.IGNORECASE,
 )
 
