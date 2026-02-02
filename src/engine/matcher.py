@@ -338,7 +338,8 @@ _NCAA_MASCOTS = re.compile(
     r"|gauchos|retrievers|matadors|ospreys|texans|tritons|islanders"
     r"|tommies|keydets|greyhounds|griffins|racers|midshipmen|lobos|aztecs"
     r"|demon deacons|wolfpack|big red|big green|crimson|pride|gladiators"
-    r"|hurricanes|hoosiers|scarlet knights|yellow jackets|commodores)$",
+    r"|hurricanes|hoosiers|scarlet knights|yellow jackets|commodores"
+    r"|hornets|coyotes|thunderbirds|owls|gamecocks|mountaineers|mavericks)$",
     re.IGNORECASE,
 )
 
@@ -748,15 +749,18 @@ def match_events(
                     score = direct_score
                     is_swapped = False
             else:
-                # Polymarket has single team (futures market)
-                # Match against YES team on Kalshi
+                # Polymarket has single team — match against all Kalshi team names
                 kalshi_yes_team = km.raw_data.get("yes_team", km.team_a)
-                score = max(
-                    team_similarity(pm.team_a, km.team_a, sport),
-                    team_similarity(pm.team_a, km.team_b, sport),
-                    team_similarity(pm.team_a, kalshi_yes_team, sport),
-                )
-                is_swapped = False  # N/A for single-team futures
+                sim_a = team_similarity(pm.team_a, km.team_a, sport)
+                sim_b = team_similarity(pm.team_a, km.team_b, sport) if km.team_b else 0
+                sim_yes = team_similarity(pm.team_a, kalshi_yes_team, sport)
+                score = max(sim_a, sim_b, sim_yes)
+                # If best match is team_b (non-YES side), teams are swapped
+                # (Poly YES = Kalshi team_b = Kalshi NO side)
+                if km.team_b and sim_b > sim_a and sim_b > sim_yes and sport not in _THREE_OUTCOME_SPORTS:
+                    is_swapped = True
+                else:
+                    is_swapped = False
 
             if score > best_score:
                 best_score = score

@@ -382,10 +382,11 @@ class KalshiConnector(BaseConnector):
                         if extracted_b:
                             team_b = extracted_b
 
-                    # Align team_a = YES team using ticker suffix
+                    # Align team_a = YES team using yes_sub_title from API
+                    yes_sub = m.get("yes_sub_title", "")
                     if team_b:
-                        team_a, team_b = self._align_yes_team(
-                            team_a, team_b, ticker, event_ticker,
+                        team_a, team_b = self._align_yes_team_v2(
+                            team_a, team_b, yes_sub, ticker, event_ticker,
                         )
 
                     # Determine which team this specific market is for
@@ -672,10 +673,11 @@ class KalshiConnector(BaseConnector):
             if extracted_b:
                 team_b = extracted_b
 
-        # Align team_a = YES team using ticker suffix
+        # Align team_a = YES team using yes_sub_title from API
+        yes_sub = m.get("yes_sub_title", "")
         if team_b:
-            team_a, team_b = self._align_yes_team(
-                team_a, team_b, ticker, event_ticker,
+            team_a, team_b = self._align_yes_team_v2(
+                team_a, team_b, yes_sub, ticker, event_ticker,
             )
 
         no_sub = m.get("no_sub_title", "")
@@ -799,6 +801,35 @@ class KalshiConnector(BaseConnector):
             if price:
                 results[mid] = price
         return results
+
+    @staticmethod
+    def _align_yes_team_v2(
+        team_a: str, team_b: str, yes_sub_title: str,
+        ticker: str, event_ticker: str,
+    ) -> tuple[str, str]:
+        """Align team_a = YES team, using API's yes_sub_title as primary signal.
+
+        Falls back to ticker suffix matching if yes_sub_title is empty.
+        """
+        if not team_a or not team_b:
+            return team_a, team_b
+
+        if yes_sub_title:
+            ys = yes_sub_title.lower().strip()
+            a_low = team_a.lower().strip()
+            b_low = team_b.lower().strip()
+            # Check exact or substring match
+            a_match = (ys == a_low) or (ys in a_low) or (a_low in ys)
+            b_match = (ys == b_low) or (ys in b_low) or (b_low in ys)
+            if b_match and not a_match:
+                return team_b, team_a
+            if a_match:
+                return team_a, team_b
+            # Neither matched — fall through to ticker-based
+
+        return KalshiConnector._align_yes_team(
+            team_a, team_b, ticker, event_ticker,
+        )
 
     @staticmethod
     def _align_yes_team(

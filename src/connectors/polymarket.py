@@ -552,8 +552,8 @@ class PolymarketConnector(BaseConnector):
 
     @staticmethod
     def _parse_vs_teams(title: str) -> tuple[str, str]:
-        """Extract two team names from 'Team A vs. Team B' or 'Team A vs Team B'."""
-        for sep in (" vs. ", " vs ", " v. ", " v "):
+        """Extract two team names from 'Team A vs. Team B' or 'Team A at Team B'."""
+        for sep in (" vs. ", " vs ", " v. ", " v ", " at ", " @ "):
             if sep in title:
                 idx = title.index(sep)
                 a = title[:idx].strip()
