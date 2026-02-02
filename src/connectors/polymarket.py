@@ -730,11 +730,39 @@ class PolymarketConnector(BaseConnector):
             data = resp.json()
             bids = data.get("bids", [])
             asks = data.get("asks", [])
-            best_bid = float(bids[0]["price"]) if bids else 0
-            best_ask = float(asks[0]["price"]) if asks else 1
-            mid = (best_bid + best_ask) / 2 if (best_bid and best_ask) else best_bid or best_ask
+
+            best_bid: float | None = float(bids[0]["price"]) if bids else None
+            best_ask: float | None = float(asks[0]["price"]) if asks else None
+
+            # Filter out junk orders: bid/ask spread > 90% means empty book
+            if best_bid is not None and best_ask is not None:
+                spread = best_ask - best_bid
+                if spread > 0.90:
+                    logger.debug(
+                        f"Book for {token_id[:20]}: junk spread "
+                        f"{best_bid}/{best_ask} ({spread:.0%}), treating as empty"
+                    )
+                    best_bid = None
+                    best_ask = None
+
+            # Compute midpoint only from meaningful bid/ask
+            if best_bid is not None and best_ask is not None:
+                mid = (best_bid + best_ask) / 2
+            elif best_bid is not None:
+                mid = best_bid
+            elif best_ask is not None:
+                mid = best_ask
+            else:
+                # Truly empty book — fall back to /midpoint
+                mid_resp = await self._clob.get("/midpoint", params={"token_id": token_id})
+                mid_resp.raise_for_status()
+                mid = float(mid_resp.json().get("mid", 0))
+
+            if mid <= 0:
+                return None
+
             return MarketPrice(
-                yes_price=mid,
+                yes_price=round(mid, 4),
                 no_price=round(1 - mid, 4),
                 yes_bid=best_bid,
                 yes_ask=best_ask,

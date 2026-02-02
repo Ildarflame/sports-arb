@@ -85,6 +85,11 @@
             {% if is_suspicious %}
                 <div class="suspicious-banner">{{ d.get('suspicious_reason', 'Flagged as suspicious') }}</div>
             {% endif %}
+            {% if not is_exec %}
+                <div style="padding: 0.3rem 0.6rem; font-size: 0.72rem; color: var(--yellow); background: rgba(234,179,8,0.08); border-radius: 4px; margin-bottom: 0.5rem;">
+                    Нет стакана {{ 'на Polymarket' if not d.get('has_poly_exec') else '' }}{{ ' и ' if not d.get('has_poly_exec') and not d.get('has_kalshi_exec') else '' }}{{ 'на Kalshi' if not d.get('has_kalshi_exec') else '' }} &mdash; цены приблизительные (midpoint API), реальная цена покупки может отличаться
+                </div>
+            {% endif %}
             <div class="exec-steps">
                 {# Step 1: YES side #}
                 <div class="exec-step">
