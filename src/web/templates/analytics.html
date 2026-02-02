@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div style="margin-bottom: 1rem;">
+    <a href="/" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">&larr; Back to Dashboard</a>
+</div>
+
+<h2 style="font-size: 1.1rem; margin-bottom: 1.5rem;">Historical Analytics</h2>
+
+{# Summary cards #}
+<div class="metrics">
+    <div class="metric">
+        <div class="metric-value">{{ data.total_arbs_found }}</div>
+        <div class="metric-label">Total Arbs Found</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value arb-positive">{{ data.active_arbs }}</div>
+        <div class="metric-label">Active Now</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ data.avg_roi }}%</div>
+        <div class="metric-label">Avg ROI</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ data.arbs_last_24h }}</div>
+        <div class="metric-label">Last 24h</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ data.arbs_last_7d }}</div>
+        <div class="metric-label">Last 7 Days</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value" style="color: var(--red);">{{ data.suspicious_count }}</div>
+        <div class="metric-label">Suspicious</div>
+    </div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    {# By Sport #}
+    <div class="card">
+        <h2>Arbs by Sport</h2>
+        {% set max_sport_count = data.by_sport.values()|list|max if data.by_sport else 1 %}
+        {% for sport, count in data.by_sport.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 70px; font-size: 0.75rem; text-align: right; color: var(--text-dim);">{{ sport|upper }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ (count / max_sport_count * 100)|round }}%; height: 100%; background: var(--blue); border-radius: 3px; transition: width 0.3s;"></div>
+            </div>
+            <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# ROI Distribution #}
+    <div class="card">
+        <h2>ROI Distribution</h2>
+        {% set max_roi_count = data.roi_distribution.values()|list|max if data.roi_distribution else 1 %}
+        {% for bucket, count in data.roi_distribution.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 55px; font-size: 0.75rem; text-align: right; color: var(--text-dim);">{{ bucket }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ (count / max_roi_count * 100)|round }}%; height: 100%; background: var(--green); border-radius: 3px;"></div>
+            </div>
+            <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# Confidence Distribution #}
+    <div class="card">
+        <h2>By Confidence</h2>
+        {% set max_conf = data.by_confidence.values()|list|max if data.by_confidence else 1 %}
+        {% for conf, count in data.by_confidence.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 60px; font-size: 0.75rem; text-align: right; color: var(--text-dim);">{{ conf|upper }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                {% if conf == 'high' %}
+                    {% set bar_color = 'var(--green)' %}
+                {% elif conf == 'medium' %}
+                    {% set bar_color = 'var(--yellow)' %}
+                {% else %}
+                    {% set bar_color = 'var(--red)' %}
+                {% endif %}
+                <div style="width: {{ (count / max_conf * 100)|round }}%; height: 100%; background: {{ bar_color }}; border-radius: 3px;"></div>
+            </div>
+            <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# Daily Timeline (last 7 days) #}
+    <div class="card">
+        <h2>Last 7 Days</h2>
+        {% if data.daily_arbs %}
+        {% set max_daily = data.daily_arbs.values()|list|max if data.daily_arbs else 1 %}
+        {% for day, count in data.daily_arbs.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 70px; font-size: 0.72rem; text-align: right; color: var(--text-dim);">{{ day }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ (count / max_daily * 100)|round }}%; height: 100%; background: #8b5cf6; border-radius: 3px;"></div>
+            </div>
+            <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state"><p>No data yet</p></div>
+        {% endif %}
+    </div>
+</div>
+
+{# Recent 20 arbs table #}
+<div class="card" style="margin-top: 1.5rem;">
+    <h2>Recent Opportunities</h2>
+    {% if data.recent %}
+    <table>
+        <thead>
+            <tr>
+                <th>Event</th>
+                <th>Sport</th>
+                <th>ROI</th>
+                <th>Cost</th>
+                <th>Direction</th>
+                <th>Active</th>
+                <th>Found</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for opp in data.recent %}
+            <tr>
+                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {{ opp.team_a }} vs {{ opp.team_b }}
+                </td>
+                <td>
+                    {% if opp.sport %}
+                        <span class="badge badge-sport badge-sport-{{ opp.sport }}">{{ opp.sport|upper }}</span>
+                    {% else %}
+                        <span style="color: var(--text-dim);">--</span>
+                    {% endif %}
+                </td>
+                <td class="{{ 'arb-positive' if opp.roi_after_fees > 0 else 'arb-negative' }}">
+                    {{ "%.2f"|format(opp.roi_after_fees) }}%
+                </td>
+                <td>{{ "%.1f"|format(opp.total_cost * 100) }}c</td>
+                <td style="font-size: 0.72rem; color: var(--text-dim);">
+                    YES@{{ opp.platform_buy_yes|upper }} + NO@{{ opp.platform_buy_no|upper }}
+                </td>
+                <td>
+                    {% if opp.still_active %}
+                        <span style="color: var(--green);">Active</span>
+                    {% else %}
+                        <span style="color: var(--text-dim);">Closed</span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 0.72rem; color: var(--text-dim);">{{ opp.found_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>No opportunities recorded yet.</p></div>
+    {% endif %}
+</div>
+
+{% endblock %}

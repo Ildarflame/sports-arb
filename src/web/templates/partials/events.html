@@ -102,7 +102,11 @@
                         <span style="color:#ff6b6b;font-size:0.6rem" title="Midpoint estimate only">MID</span>
                     {% endif %}
                 {% elif not event.matched %}
+                    {% set km_sport = (km.sport if km else '') %}
                     <span style="color: var(--text-dim); font-size: 0.75rem;">Kalshi only</span>
+                    {% if km_sport %}
+                        <span class="badge badge-sport badge-sport-{{ km_sport }}" style="margin-left: 4px;">{{ km_sport|upper }}</span>
+                    {% endif %}
                 {% else %}
                     <span style="color: var(--text-dim)">--</span>
                 {% endif %}
@@ -111,6 +115,27 @@
         {% endfor %}
     </tbody>
 </table>
+{# Kalshi-only counter by sport #}
+{% set unmatched = events|selectattr('matched', 'equalto', false)|list %}
+{% if unmatched %}
+<div style="margin-top: 0.5rem; font-size: 0.7rem; color: var(--text-dim);">
+    {{ unmatched|length }} Kalshi-only
+    {% set ns = namespace(counts={}) %}
+    {% for e in unmatched %}
+        {% set km = e.markets.get(Platform.KALSHI) %}
+        {% if km and km.sport %}
+            {% if km.sport in ns.counts %}
+                {% set _ = ns.counts.update({km.sport: ns.counts[km.sport] + 1}) %}
+            {% else %}
+                {% set _ = ns.counts.update({km.sport: 1}) %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+    {% if ns.counts %}
+        ({% for sport, cnt in ns.counts.items() %}{{ cnt }} {{ sport|upper }}{% if not loop.last %}, {% endif %}{% endfor %})
+    {% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="empty-state">
     <p>No events yet. Scanning markets...</p>

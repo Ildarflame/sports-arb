@@ -221,6 +221,9 @@
         }
         .mb-exec { background: rgba(34,197,94,0.15); color: var(--green); }
         .mb-mid { background: rgba(234,179,8,0.15); color: var(--yellow); }
+        .mb-conf-high { background: rgba(34,197,94,0.15); color: var(--green); }
+        .mb-conf-med { background: rgba(234,179,8,0.15); color: var(--yellow); }
+        .mb-conf-low { background: rgba(239,68,68,0.15); color: var(--red); }
         .mb-vol-high { background: rgba(59,130,246,0.15); color: var(--blue); }
         .mb-vol-low { background: rgba(156,163,175,0.15); color: var(--text-dim); }
         .mb-spread-wide { background: rgba(239,68,68,0.15); color: var(--red); }
@@ -337,6 +340,7 @@
             <div class="status-bar">
                 <span><span class="status-dot live"></span> LIVE</span>
                 <span>Updated: <span id="last-update">{{ last_update }}</span></span>
+                <a href="/analytics" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">Analytics</a>
             </div>
         </header>
         {% block content %}{% endblock %}

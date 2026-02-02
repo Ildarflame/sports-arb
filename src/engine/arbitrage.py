@@ -219,4 +219,17 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                 f"Cost={best_opp.total_cost}"
             )
 
+        # Compute confidence: high/medium/low based on data quality
+        has_exec = best_opp.details.get("executable", False)
+        min_vol = min(poly_vol or 0, kalshi_vol or 0)
+        max_vol = max(poly_vol or 0, kalshi_vol or 0)
+        narrow_spread = spread_pct is not None and spread_pct < 10
+
+        if has_exec and max_vol > 5000 and narrow_spread:
+            best_opp.details["confidence"] = "high"
+        elif has_exec or max_vol > 1000:
+            best_opp.details["confidence"] = "medium"
+        else:
+            best_opp.details["confidence"] = "low"
+
     return best_opp

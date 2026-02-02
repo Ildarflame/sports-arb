@@ -678,6 +678,75 @@ class PolymarketConnector(BaseConnector):
             logger.exception(f"Error fetching book for {token_id}")
             return None
 
+    # Known sports-related tag patterns for discovery
+    _KNOWN_SPORTS_PATTERNS = {
+        "sports", "nba", "nfl", "nhl", "mlb", "soccer", "football", "tennis",
+        "cricket", "ufc", "mma", "boxing", "golf", "pga", "rugby", "f1",
+        "motorsport", "esports", "ncaa", "basketball", "hockey", "baseball",
+        "premier-league", "la-liga", "bundesliga", "serie-a", "ligue-1",
+        "champions-league", "mls", "pickleball", "chess",
+    }
+
+    async def discover_sports_tags(self) -> list[str]:
+        """Discover new sports tags from active Polymarket events.
+
+        Fetches recent events without tag filter, collects all tags,
+        and logs any new ones not in _EXTRA_TAG_SLUGS.
+        Returns list of newly discovered tags.
+        """
+        known_tags = set(self._EXTRA_TAG_SLUGS)
+        discovered_tags: set[str] = set()
+        new_tags: list[str] = []
+
+        try:
+            for offset in range(0, 500, 100):
+                resp = await self._http.get(
+                    "/events",
+                    params={
+                        "active": "true",
+                        "closed": "false",
+                        "limit": 100,
+                        "offset": offset,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+                if not events:
+                    break
+
+                for event in events:
+                    tags = event.get("tags", [])
+                    for tag in tags:
+                        slug = tag.get("slug", tag) if isinstance(tag, dict) else str(tag)
+                        slug_lower = slug.lower()
+                        discovered_tags.add(slug_lower)
+
+                if len(events) < 100:
+                    break
+
+            # Check for sports-related tags not in our known set
+            for tag in discovered_tags:
+                if tag in known_tags:
+                    continue
+                # Check if this tag overlaps with known sports patterns
+                for pattern in self._KNOWN_SPORTS_PATTERNS:
+                    if pattern in tag or tag in pattern:
+                        if tag not in known_tags:
+                            new_tags.append(tag)
+                            logger.warning(f"New Polymarket sports tag discovered: {tag}")
+                        break
+
+            if new_tags:
+                logger.info(f"Tag discovery: {len(new_tags)} new sports tags found: {new_tags}")
+            else:
+                logger.debug(f"Tag discovery: scanned {len(discovered_tags)} tags, no new sports tags")
+
+        except Exception:
+            logger.exception("Error during tag discovery")
+
+        return new_tags
+
     async def subscribe_prices(self, market_ids: list[str]) -> AsyncIterator[tuple[str, MarketPrice]]:
         """Subscribe to WebSocket price changes."""
         if not market_ids:

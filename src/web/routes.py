@@ -135,6 +135,25 @@ def _parse_opp_details(opp: dict) -> dict:
     return opp
 
 
+_CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _sort_by_confidence_then_roi(opportunities: list[dict]) -> list[dict]:
+    """Sort opportunities: HIGH confidence first, then by ROI desc within each tier."""
+    def _key(opp):
+        details = opp.get("details", {})
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except (json.JSONDecodeError, TypeError):
+                details = {}
+        conf = details.get("confidence", "low")
+        tier = _CONFIDENCE_ORDER.get(conf, 2)
+        roi = opp.get("roi_after_fees", 0) or 0
+        return (tier, -roi)
+    return sorted(opportunities, key=_key)
+
+
 def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
     """Dedupe opportunities per game. Both team perspectives of the same game collapse into one."""
     seen: dict[tuple, dict] = {}
@@ -160,6 +179,33 @@ def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
     for key, opp in suspicious_seen.items():
         if key not in seen:
             result.append(opp)
+    return _sort_by_confidence_then_roi(result)
+
+
+def _filter_by_confidence(opportunities: list[dict], min_confidence: str) -> list[dict]:
+    """Filter opportunities by minimum confidence tier."""
+    if not min_confidence or min_confidence == "all":
+        return opportunities
+    allowed = set()
+    if min_confidence == "high":
+        allowed = {"high"}
+    elif min_confidence == "medium":
+        allowed = {"high", "medium"}
+    elif min_confidence == "low":
+        allowed = {"high", "medium", "low"}
+    else:
+        return opportunities
+    result = []
+    for opp in opportunities:
+        details = opp.get("details", {})
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except (json.JSONDecodeError, TypeError):
+                details = {}
+        conf = details.get("confidence", "low")
+        if conf in allowed:
+            result.append(opp)
     return result
 
 
@@ -167,6 +213,8 @@ def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
 async def dashboard(request: Request):
     opportunities = await db.get_active_opportunities(limit=50)
     opportunities = _dedupe_opportunities(opportunities)
+    min_confidence = request.query_params.get("min_confidence", "all")
+    opportunities = _filter_by_confidence(opportunities, min_confidence)
     from src.state import app_state
     events = app_state.get("matched_events", [])
     sport = request.query_params.get("sport", "")
@@ -270,6 +318,20 @@ async def partial_alerts(request: Request):
     return templates.TemplateResponse(
         "partials/alerts.html",
         {"request": request, "opportunities": opportunities},
+    )
+
+
+@router.get("/api/analytics")
+async def api_analytics():
+    return await db.get_analytics()
+
+
+@router.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    data = await db.get_analytics()
+    return templates.TemplateResponse(
+        "analytics.html",
+        {"request": request, "data": data, "last_update": datetime.now(UTC).strftime("%H:%M:%S UTC")},
     )
 
 

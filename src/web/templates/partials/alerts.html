@@ -50,11 +50,13 @@
         <span class="arb-cost">{{ "%.1f"|format(total * 100) }}c</span>
         <span class="arb-roi">+{{ "%.2f"|format(roi) }}%</span>
         <span class="arb-meta">
-            <span class="micro-badge {{ 'mb-exec' if is_exec else 'mb-mid' }}">{{ 'EXEC' if is_exec else 'MID' }}</span>
-            {% if pvol is not none and pvol > 10000 %}
-                <span class="micro-badge mb-vol-high" title="Poly vol: ${{ "%.0f"|format(pvol) }}">VOL</span>
-            {% elif pvol is not none %}
-                <span class="micro-badge mb-vol-low" title="Poly vol: ${{ "%.0f"|format(pvol) }}">LOW</span>
+            {% set conf = d.get('confidence', 'low') %}
+            {% if conf == 'high' %}
+                <span class="micro-badge mb-conf-high" title="Both platforms have bid/ask, volume > $5k, spread < 10%">HIGH</span>
+            {% elif conf == 'medium' %}
+                <span class="micro-badge mb-conf-med" title="One platform has bid/ask or volume > $1k">MED</span>
+            {% else %}
+                <span class="micro-badge mb-conf-low" title="Midpoint only, low volume or no bid/ask data">LOW</span>
             {% endif %}
             {% if d.get('spread_pct') is not none and d.get('spread_pct') > 10 %}
                 <span class="micro-badge mb-spread-wide" title="Spread: {{ "%.0f"|format(d.get('spread_pct')) }}%">WIDE</span>

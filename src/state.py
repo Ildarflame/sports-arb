@@ -16,4 +16,6 @@ app_state: dict = {
     "ws_price_cache": {},        # token_id -> MarketPrice
     "ws_subscribed_ids": set(),  # currently subscribed token_ids
     "ws_update_count": 0,        # total WS price updates received
+    # Tag discovery
+    "last_tag_discovery": 0.0,   # monotonic timestamp of last tag discovery run
 }

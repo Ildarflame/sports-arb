@@ -29,16 +29,20 @@ KALSHI_CACHE_TTL = 600  # 10 minutes
 POLY_CACHE_TTL = 300    # 5 minutes
 
 # Concurrency limiter for price fetches
-_price_semaphore = asyncio.Semaphore(10)
+_price_semaphore = asyncio.Semaphore(15)
 
 # Token → event mapping for O(1) WS price application
 _token_to_event: dict[str, SportEvent] = {}
 
 
-async def _fetch_with_semaphore(coro):
-    """Run a coroutine with semaphore-limited concurrency."""
+async def _fetch_with_semaphore(coro, timeout: float = 5.0):
+    """Run a coroutine with semaphore-limited concurrency and timeout."""
     async with _price_semaphore:
-        return await coro
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.debug("Price fetch timed out after %.1fs", timeout)
+            return None
 
 
 def _is_valid_price(price: MarketPrice | None) -> bool:
@@ -203,9 +207,23 @@ async def fetch_books_for_candidates(
             km.price = result
             kalshi_updated += 1
 
+    # Diagnostic: count candidates with real bid/ask data
+    poly_exec = 0
+    kalshi_exec = 0
+    for event, _ in poly_tasks:
+        pm = event.markets.get(Platform.POLYMARKET)
+        if pm and pm.price and pm.price.yes_bid is not None and pm.price.yes_ask is not None:
+            poly_exec += 1
+    for event, _ in kalshi_tasks:
+        km = event.markets.get(Platform.KALSHI)
+        if km and km.price and km.price.yes_bid is not None and km.price.yes_ask is not None:
+            kalshi_exec += 1
+
+    total = len(poly_tasks) or 1
     logger.info(
         f"Book fetch: {poly_updated}/{len(poly_tasks)} Poly books, "
-        f"{kalshi_updated}/{len(kalshi_tasks)} Kalshi prices refreshed"
+        f"{kalshi_updated}/{len(kalshi_tasks)} Kalshi prices refreshed | "
+        f"EXEC data: {poly_exec}/{total} Poly bid/ask, {kalshi_exec}/{total} Kalshi bid/ask"
     )
 
 
@@ -353,6 +371,17 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             # Update WS subscriptions with current matched token_ids
             _update_ws_subscriptions(matched)
 
+            # Log Kalshi-only games for well-known soccer leagues (debug level)
+            _major_soccer_leagues = {"soccer"}
+            for event in matched:
+                if not event.matched:
+                    km = event.markets.get(Platform.KALSHI)
+                    if km and km.sport in _major_soccer_leagues and event.team_b:
+                        logger.debug(
+                            f"Kalshi-only: {event.team_a} vs {event.team_b} ({km.sport}) "
+                            f"— no Poly match found"
+                        )
+
             if matched:
                 # Pass 0.5: Apply any cached WS prices before full fetch
                 ws_applied = _apply_ws_cache(matched)
@@ -362,7 +391,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 # Pass 1: Fetch midpoint prices for all matched events
                 await fetch_and_update_prices(poly, kalshi, matched)
 
-                # Pass 1.5: Screen candidates by midpoint cost (with 2% buffer for bid/ask spread)
+                # Pass 1.5: Screen candidates by midpoint cost (with 1% buffer for bid/ask spread)
                 arb_candidates: list[SportEvent] = []
                 for event in matched:
                     # Skip stale events (game already played)
@@ -387,6 +416,9 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         if (pp.yes_price == 0.5 and pp.no_price == 0.5
                                 and not event.team_b):
                             continue
+                        # Skip futures from book fetching — only game markets have actionable books
+                        if pm.market_type == "futures" or km.market_type == "futures":
+                            continue
                         if event.teams_swapped:
                             # Swapped: Kalshi YES = opposite team, so invert
                             cost1 = pp.yes_price + (1 - kp.yes_price)
@@ -394,7 +426,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         else:
                             cost1 = pp.yes_price + kp.no_price
                             cost2 = kp.yes_price + pp.no_price
-                        if cost1 < 1.02 or cost2 < 1.02:
+                        if cost1 < 1.01 or cost2 < 1.01:
                             arb_candidates.append(event)
 
                 # Pass 2: Fetch order books only for candidates (bid/ask precision)
@@ -438,7 +470,11 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         )
                         current_arb_keys.add(arb_key)
 
-                        opp_id = await db.save_opportunity(opp)
+                        # Derive sport from event markets
+                        _pm = event.markets.get(Platform.POLYMARKET)
+                        _km = event.markets.get(Platform.KALSHI)
+                        _sport = (_pm.sport if _pm else "") or (_km.sport if _km else "")
+                        opp_id = await db.save_opportunity(opp, sport=_sport)
                         logger.info(
                             f"ARBITRAGE SAVED: {opp.event_title} "
                             f"ROI={opp.roi_after_fees}% id={opp_id}"
@@ -459,6 +495,15 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 broadcast_event("price_update", {
                     "matched_count": len(matched),
                 })
+
+            # Polymarket tag discovery — run once per hour
+            tag_discovery_age = time.monotonic() - app_state["last_tag_discovery"]
+            if tag_discovery_age >= 3600:  # 60 minutes
+                app_state["last_tag_discovery"] = time.monotonic()
+                try:
+                    await poly.discover_sports_tags()
+                except Exception:
+                    logger.exception("Tag discovery failed")
 
             # Batch commit all DB writes from this scan cycle
             await db.commit()
