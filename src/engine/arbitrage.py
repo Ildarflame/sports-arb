@@ -229,6 +229,10 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
             )
 
         # Compute confidence: high/medium/low based on data quality
+        logger.info(
+            f"CONF_DEBUG {event.title[:30]}: pp.bid={pp.yes_bid} pp.ask={pp.yes_ask} "
+            f"raw.bid={poly_market.price.yes_bid} raw.ask={poly_market.price.yes_ask}"
+        )
         has_poly_exec = bool(pp.yes_ask and pp.yes_bid)
         has_kalshi_exec = bool(kp.yes_ask and kp.yes_bid)
         has_both_exec = has_poly_exec and has_kalshi_exec
