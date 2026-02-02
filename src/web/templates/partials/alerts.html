@@ -93,12 +93,12 @@
                         <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_a }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
                         ставишь на победу {{ opp.team_a }} по
                         <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
-                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        {% if is_exec %}(best ask){% else %}(оценка){% endif %}
                         <div class="step-hint">На Polymarket это YES-контракт на {{ opp.team_a }}. Если {{ opp.team_a }} победит &rarr; получишь $1.</div>
                     {% else %}
                         <span class="step-action">Kalshi:</span> Найди маркет <strong>&laquo;{{ opp.team_a }}&raquo;</strong> и нажми <strong>Yes</strong> по
                         <span class="step-price">{{ "%.1f"|format(yes_buy_price * 100) }}c</span>
-                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        {% if is_exec %}(best ask){% else %}(оценка){% endif %}
                         <div class="step-hint">На Kalshi каждая команда &mdash; отдельный маркет с Yes/No. Тебе нужен именно Yes на {{ opp.team_a }}.</div>
                     {% endif %}
                     {% if yes_url %}
@@ -112,12 +112,12 @@
                         <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_b }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
                         ставишь на победу {{ opp.team_b }} по
                         <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
-                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        {% if is_exec %}(best ask){% else %}(оценка){% endif %}
                         <div class="step-hint">Это то же самое что NO на {{ opp.team_a }}. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
                     {% else %}
                         <span class="step-action">Kalshi:</span> Найди маркет <strong>&laquo;{{ opp.team_a }}&raquo;</strong> и нажми <strong>No</strong> по
                         <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
-                        {% if is_exec %}(ask){% else %}(mid){% endif %}
+                        {% if is_exec %}(best ask){% else %}(оценка){% endif %}
                         <div class="step-hint">Тот же маркет что в шаге 1, но кнопка No. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
                     {% endif %}
                     {% if no_url %}
@@ -151,14 +151,14 @@
                     <td>{{ "%.1f"|format(d.get('kalshi_yes_ask') * 100) + 'c' if d.get('kalshi_yes_ask') else '--' }}</td>
                 </tr>
                 <tr>
-                    <td class="label-col">YES mid</td>
-                    <td>{{ "%.1f"|format(d.get('poly_yes') * 100) + 'c' if d.get('poly_yes') else '--' }}</td>
-                    <td>{{ "%.1f"|format(d.get('kalshi_yes') * 100) + 'c' if d.get('kalshi_yes') else '--' }}</td>
+                    <td class="label-col">NO bid</td>
+                    <td>{{ "%.1f"|format((1.0 - (d.get('poly_yes_ask') or 0)) * 100) + 'c' if d.get('poly_yes_ask') else '--' }}</td>
+                    <td>{{ "%.1f"|format((1.0 - (d.get('kalshi_yes_ask') or 0)) * 100) + 'c' if d.get('kalshi_yes_ask') else '--' }}</td>
                 </tr>
                 <tr>
-                    <td class="label-col">NO mid</td>
-                    <td>{{ "%.1f"|format(d.get('poly_no') * 100) + 'c' if d.get('poly_no') else '--' }}</td>
-                    <td>{{ "%.1f"|format(d.get('kalshi_no') * 100) + 'c' if d.get('kalshi_no') else '--' }}</td>
+                    <td class="label-col">NO ask</td>
+                    <td>{{ "%.1f"|format((1.0 - (d.get('poly_yes_bid') or 0)) * 100) + 'c' if d.get('poly_yes_bid') else '--' }}</td>
+                    <td>{{ "%.1f"|format((1.0 - (d.get('kalshi_yes_bid') or 0)) * 100) + 'c' if d.get('kalshi_yes_bid') else '--' }}</td>
                 </tr>
                 {% if d.get('spread_pct') is not none %}
                 <tr>
@@ -171,21 +171,20 @@
                     <td>{{ '$' + "{:,.0f}".format(pvol) if pvol else '--' }}</td>
                     <td>{{ '$' + "{:,.0f}".format(kvol) if kvol else '--' }}</td>
                 </tr>
-                {% if mid_cost %}
-                <tr>
-                    <td class="label-col">Mid cost</td>
-                    <td colspan="2">{{ "%.1f"|format(mid_cost * 100) }}c</td>
+                <tr style="background: rgba(34,197,94,0.06);">
+                    <td class="label-col" style="font-weight: 600; color: var(--green);">Exec price</td>
+                    {% if buy_yes_plat == 'POLYMARKET' %}
+                        <td><span class="highlight">{{ "%.1f"|format(yes_buy_price * 100) }}c</span> <span style="font-size: 0.65rem; color: var(--text-dim);">buy YES</span></td>
+                        <td><span class="highlight">{{ "%.1f"|format(no_buy_price * 100) }}c</span> <span style="font-size: 0.65rem; color: var(--text-dim);">buy NO</span></td>
+                    {% else %}
+                        <td><span class="highlight">{{ "%.1f"|format(no_buy_price * 100) }}c</span> <span style="font-size: 0.65rem; color: var(--text-dim);">buy NO</span></td>
+                        <td><span class="highlight">{{ "%.1f"|format(yes_buy_price * 100) }}c</span> <span style="font-size: 0.65rem; color: var(--text-dim);">buy YES</span></td>
+                    {% endif %}
                 </tr>
-                {% endif %}
                 {% if exec_cost %}
                 <tr>
-                    <td class="label-col">Exec cost</td>
-                    <td colspan="2">
-                        <span class="highlight">{{ "%.1f"|format(exec_cost * 100) }}c</span>
-                        {% if mid_cost %}
-                            <span class="slippage">(+{{ "%.1f"|format((exec_cost - mid_cost) * 100) }}c slippage)</span>
-                        {% endif %}
-                    </td>
+                    <td class="label-col">Total cost</td>
+                    <td colspan="2"><span class="highlight">{{ "%.1f"|format(exec_cost * 100) }}c</span></td>
                 </tr>
                 {% endif %}
             </table>
