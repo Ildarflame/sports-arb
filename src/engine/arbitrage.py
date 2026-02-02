@@ -65,11 +65,6 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     pp = normalize_price(poly_market.price, Platform.POLYMARKET)
     kp = normalize_price(kalshi_market.price, Platform.KALSHI)
 
-    # DEBUG: trace bid/ask propagation
-    if poly_market.price.yes_bid is not None:
-        logger.info(
-            f"ARB_DEBUG {event.title[:40]}: raw poly bid={poly_market.price.yes_bid} ask={poly_market.price.yes_ask} → pp bid={pp.yes_bid} ask={pp.yes_ask}"
-        )
 
     # If teams are swapped between platforms, invert Kalshi YES/NO
     # so that YES on both platforms refers to the same team winning

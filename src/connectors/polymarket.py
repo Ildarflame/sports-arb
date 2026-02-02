@@ -752,8 +752,8 @@ class PolymarketConnector(BaseConnector):
             bids = data.get("bids", [])
             asks = data.get("asks", [])
 
-            best_bid: float | None = float(bids[-1]["price"]) if bids else None
-            best_ask: float | None = float(asks[0]["price"]) if asks else None
+            best_bid: float | None = max((float(b["price"]) for b in bids), default=None) if bids else None
+            best_ask: float | None = min((float(a["price"]) for a in asks), default=None) if asks else None
 
             # Filter out junk orders: bid/ask spread > 90% means empty book
             if best_bid is not None and best_ask is not None:
