@@ -30,8 +30,6 @@ _KALSHI_SPORT_MAP: dict[str, str] = {
     "KXMLB": "mlb",
     "KXUFC": "mma",
     "KXATP": "tennis", "KXWTA": "tennis",
-    "KXFOPENMENSINGLE": "tennis", "KXWIMBLEDONMENSINGLE": "tennis",
-    "KXAUSOPENMENSINGLE": "tennis", "KXUSOPENMENSINGLE": "tennis",
     "KXCS2": "esports", "KXLOL": "esports", "KXVALORANT": "esports", "KXDOTA2": "esports",
     "KXCRICKET": "cricket", "KXIPL": "cricket", "KXICC": "cricket", "KXCRICKETT20IMATCH": "cricket",
     "KXPGATOUR": "golf", "KXLPGATOUR": "golf", "KXDPWORLDTOUR": "golf", "KXTGLMATCH": "golf",
@@ -98,11 +96,12 @@ GAME_TICKER_PREFIXES = (
     "KXEPLGAME", "KXLALIGAGAME", "KXBUNDESLIGAGAME", "KXSERIEAGAME",
     "KXLIGUE1GAME", "KXSAUDIPLGAME", "KXEKSTRAKLASAGAME", "KXSUPERLIGGAME",
     "KXBELGIANPLGAME",  # Soccer
+    "KXUCLGAME",  # Champions League matches
     "KXNBAGAME", "KXNCAAMBGAME", "KXNCAAWBGAME",  # Basketball
     "KXNFLGAME", "KXNCAAFGAME",  # Football
     "KXNHLGAME",  # Hockey
     "KXMLBGAME",  # Baseball
-    "KXUFCGAME", "KXUFCMATCH",  # MMA
+    "KXUFCFIGHT",  # MMA
     "KXATPMATCH", "KXATPCHALLENGERMATCH", "KXWTAMATCH",  # Tennis
     "KXCS2GAME", "KXLOLGAME", "KXVALORANTGAME", "KXDOTA2GAME",  # Esports
     "KXTGLMATCH",  # Golf (TGL match play)
@@ -182,29 +181,27 @@ class KalshiConnector(BaseConnector):
     # Championship/futures series tickers on Kalshi (matchable with Polymarket futures)
     FUTURES_SERIES_TICKERS = (
         # NBA
-        "KXNBACHAMP", "KXNBAEAST", "KXNBAWEST", "KXNBAMVP", "KXNBAFINMVP",
-        "KXNBADROTY", "KXNBADPOY",
+        "KXNBA", "KXNBAEAST", "KXNBAWEST", "KXNBAMVP", "KXNBAFINMVP",
+        "KXNBADPOY", "KXNBAROY", "KXNBACOY", "KXNBASIXTH", "KXNBAMIMP",
+        "KXNBAPLAYOFF", "KXNBADRAFT1",
         # NFL
-        "KXNFLCHAMP", "KXNFLMVP", "KXNFLDROTY", "KXNFLSBMVP",
+        "KXNFLMVP", "KXNFLDROTY", "KXNFLSBMVP",
         # MLB
-        "KXMLBWS", "KXMLBALCHAMP", "KXMLBNLCHAMP", "KXMLBMVP",
+        "KXMLB", "KXMLBAL", "KXMLBNL", "KXMLBPLAYOFFS",
         # NHL
-        "KXNHLCHAMP", "KXNHLFINALSEXACT",
+        "KXNHL", "KXNHLEAST", "KXNHLWEST", "KXNHLPLAYOFF",
         # Soccer
-        "KXUCLCHAMP", "KXEPLCHAMP", "KXEPLTOP4", "KXLALIGACHAMP",
-        "KXBUNDESLIGACHAMP", "KXSERIEACHAMP", "KXLIGUE1CHAMP",
+        "KXUCL", "KXEPLTOP4", "KXEPLTOP2", "KXLALIGA",
+        "KXBUNDESLIGA", "KXSERIEA", "KXLIGUE1",
         "KXMENWORLDCUP",
         # College
-        "KXNCAAFBCHAMP", "KXNCAAMBCHAMP",
-        # Tennis Grand Slams
-        "KXFOPENMENSINGLE", "KXWIMBLEDONMENSINGLE",
-        "KXAUSOPENMENSINGLE", "KXUSOPENMENSINGLE",
-        # MMA
-        "KXUFCCHAMP",
+        "KXNCAAF",
+        # Tennis
+        "KXATPGRANDSLAM", "KXWTAGRANDSLAM",
         # Golf
         "KXPGATOUR", "KXLPGATOUR", "KXDPWORLDTOUR",
         # Motorsport
-        "KXF1",
+        "KXF1", "KXF1CONSTRUCTORS",
     )
 
     # Daily game series tickers (fetched via /events endpoint)
@@ -212,7 +209,7 @@ class KalshiConnector(BaseConnector):
         # Soccer
         "KXEPLGAME", "KXLALIGAGAME", "KXBUNDESLIGAGAME", "KXSERIEAGAME",
         "KXLIGUE1GAME", "KXSAUDIPLGAME", "KXEKSTRAKLASAGAME", "KXSUPERLIGGAME",
-        "KXBELGIANPLGAME",
+        "KXBELGIANPLGAME", "KXUCLGAME",
         # Basketball
         "KXNBAGAME", "KXNCAAMBGAME", "KXNCAAWBGAME",
         # Football
@@ -222,9 +219,10 @@ class KalshiConnector(BaseConnector):
         # Baseball
         "KXMLBGAME",
         # MMA
-        "KXUFCGAME", "KXUFCMATCH",
+        "KXUFCFIGHT",
         # Tennis
         "KXATPMATCH", "KXATPCHALLENGERMATCH", "KXWTAMATCH",
+        "KXWTACHALLENGERMATCH",
         # Esports
         "KXCS2GAME", "KXLOLGAME", "KXVALORANTGAME", "KXDOTA2GAME",
         # Golf (TGL match play)
