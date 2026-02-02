@@ -45,22 +45,21 @@ def _is_valid_price(price: MarketPrice | None) -> bool:
     """Check if a price looks real (not a 50/50 default placeholder)."""
     if not price:
         return False
-    # Exactly 0.5/0.5 with no bid/ask and no volume = placeholder
+    # Exactly 0.5/0.5 with no bid/ask = placeholder (even with volume)
     if (price.yes_price == 0.5
             and price.no_price == 0.5
             and price.yes_bid is None
-            and price.yes_ask is None
-            and (price.volume or 0) == 0):
+            and price.yes_ask is None):
         return False
     return True
 
 
 def _is_stale_event(event: SportEvent) -> bool:
-    """Check if a game event has a date in the past (>1 day old)."""
+    """Check if a game event's date is in the past."""
     pm = event.markets.get(Platform.POLYMARKET)
     km = event.markets.get(Platform.KALSHI)
     game_date = (pm.game_date if pm else None) or (km.game_date if km else None)
-    if game_date and game_date < date.today() - timedelta(days=1):
+    if game_date and game_date < date.today():
         return True
     return False
 
@@ -384,6 +383,10 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         # Skip dead markets where both platforms have zero volume
                         if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
                             continue
+                        # Skip futures with Poly at exactly 50/50 — default/broken pricing
+                        if (pp.yes_price == 0.5 and pp.no_price == 0.5
+                                and not event.team_b):
+                            continue
                         if event.teams_swapped:
                             # Swapped: Kalshi YES = opposite team, so invert
                             cost1 = pp.yes_price + (1 - kp.yes_price)
@@ -404,6 +407,8 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
 
                 # Track which arbs are found this scan (for deactivation)
                 current_arb_keys: set[tuple[str, str, str]] = set()
+                # Track game-level dedup: both team perspectives of the same game collapse
+                seen_game_keys: set[tuple[str, ...]] = set()
 
                 # Pass 3: Calculate arbitrage with executable prices
                 for event in matched:
@@ -416,6 +421,15 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                                 f"{opp.event_title} ROI={opp.roi_after_fees}%"
                             )
                             continue
+
+                        # Deduplicate by game: both team perspectives produce the same key
+                        game_key = tuple(sorted([
+                            opp.team_a.lower().strip(),
+                            opp.team_b.lower().strip(),
+                        ]))
+                        if game_key in seen_game_keys:
+                            continue
+                        seen_game_keys.add(game_key)
 
                         arb_key = (
                             opp.team_a,

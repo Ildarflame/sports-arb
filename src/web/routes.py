@@ -60,19 +60,19 @@ def _is_placeholder_price(price) -> bool:
     """Check if price is a 50/50 placeholder (no real data)."""
     if not price:
         return True
+    # 50/50 with no bid/ask = placeholder even with volume
     return (price.yes_price == 0.5
             and price.no_price == 0.5
             and price.yes_bid is None
-            and price.yes_ask is None
-            and (price.volume or 0) == 0)
+            and price.yes_ask is None)
 
 
 def _is_stale_event(event) -> bool:
-    """Check if a game event's date is in the past (>1 day old)."""
+    """Check if a game event's date is in the past."""
     pm = event.markets.get(Platform.POLYMARKET)
     km = event.markets.get(Platform.KALSHI)
     game_date = (pm.game_date if pm else None) or (km.game_date if km else None)
-    if game_date and game_date < date.today() - timedelta(days=1):
+    if game_date and game_date < date.today():
         return True
     return False
 
@@ -92,8 +92,19 @@ def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None
         # Skip events where Poly price is a 50/50 placeholder (no volume, no book)
         if pm and _is_placeholder_price(pm.price):
             continue
-        # Skip extreme Kalshi prices (<=2c or >=98c) — illiquid long-shot futures
+        # Skip extreme prices (<=2c or >=98c) — illiquid or resolved markets
         if km and km.price and (km.price.yes_price <= 0.02 or km.price.yes_price >= 0.98):
+            continue
+        if pm and pm.price and (pm.price.yes_price <= 0.02 or pm.price.yes_price >= 0.98):
+            continue
+        # Skip futures with Poly at exactly 50/50 — default/broken pricing
+        if (pm and pm.price and pm.price.yes_price == 0.5 and pm.price.no_price == 0.5
+                and not e.team_b):
+            continue
+        # Skip events where BOTH platforms show exactly 50/50 — bad data
+        if (pm and pm.price and km and km.price
+                and pm.price.yes_price == 0.5 and pm.price.no_price == 0.5
+                and km.price.yes_price == 0.5 and km.price.no_price == 0.5):
             continue
         cleaned.append(e)
     events = cleaned
@@ -125,19 +136,23 @@ def _parse_opp_details(opp: dict) -> dict:
 
 
 def _dedupe_opportunities(opportunities: list[dict]) -> list[dict]:
-    """Dedupe opportunities per key. Suspicious ones are kept but sorted to the end."""
+    """Dedupe opportunities per game. Both team perspectives of the same game collapse into one."""
     seen: dict[tuple, dict] = {}
     suspicious_seen: dict[tuple, dict] = {}
     for opp in opportunities:
         _parse_opp_details(opp)
         details = opp["details"]
-        key = (opp.get("team_a", ""), opp.get("platform_buy_yes", ""), opp.get("platform_buy_no", ""))
+        # Use sorted team names so both perspectives of the same game produce the same key
+        teams = tuple(sorted([opp.get("team_a", "").lower().strip(),
+                              opp.get("team_b", "").lower().strip()]))
+        key = teams
 
         if details.get("suspicious"):
             if key not in suspicious_seen:
                 suspicious_seen[key] = opp
         else:
-            if key not in seen:
+            # Keep the one with higher ROI
+            if key not in seen or (opp.get("roi_after_fees", 0) or 0) > (seen[key].get("roi_after_fees", 0) or 0):
                 seen[key] = opp
 
     # Normal opps first, suspicious at the end (exclude suspicious that already have a clean version)
