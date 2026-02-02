@@ -48,6 +48,44 @@ def _detect_sport_kalshi(event_ticker: str) -> str:
     return ""
 
 
+def _detect_market_subtype(ticker: str, title: str) -> tuple[str, float | None]:
+    """Detect market subtype (moneyline/spread/over_under) and line value from Kalshi ticker/title.
+
+    Kalshi ticker patterns:
+      Spread: KXNBAGAME-26FEB01...-SP-3.5 or title contains "spread" / "+3.5" / "-3.5"
+      O/U: KXNBAGAME-26FEB01...-OU-220.5 or title contains "over" / "under" / "total"
+    """
+    upper = ticker.upper()
+    title_lower = title.lower()
+
+    # Check ticker for spread indicator
+    sp_match = re.search(r"-SP[+-]?(\d+\.?\d*)", upper)
+    if sp_match:
+        line = float(sp_match.group(1))
+        # Determine sign from title or ticker context
+        if "-" in ticker[ticker.upper().find("-SP"):]:
+            return "spread", -line
+        return "spread", line
+
+    # Check ticker for O/U indicator
+    ou_match = re.search(r"-(?:OU|TOTAL)(\d+\.?\d*)", upper)
+    if ou_match:
+        return "over_under", float(ou_match.group(1))
+
+    # Fallback: check title
+    if "spread" in title_lower or re.search(r"[+-]\d+\.5", title):
+        m = re.search(r"([+-]\d+\.?\d*)", title)
+        if m:
+            return "spread", float(m.group(1))
+
+    if any(kw in title_lower for kw in ("over ", "under ", "total ", "o/u ")):
+        m = re.search(r"(?:over|under|total|o/u)\s+(\d+\.?\d*)", title_lower)
+        if m:
+            return "over_under", float(m.group(1))
+
+    return "moneyline", None
+
+
 def _parse_date_from_kalshi_ticker(event_ticker: str) -> date | None:
     """Parse date from Kalshi event ticker like KXNBAGAME-26FEB01AVLBRE or KXNBAGAME-26FEB01-..."""
     m = re.search(r"-(\d{2})([A-Z]{3})(\d{2})", event_ticker.upper())
@@ -352,6 +390,9 @@ class KalshiConnector(BaseConnector):
                     if not yes_team:
                         yes_team = no_sub  # no_sub_title is sometimes the YES team name
 
+                    # Detect spread/OU subtype
+                    s1_subtype, s1_line = _detect_market_subtype(ticker, title)
+
                     market = Market(
                         platform=Platform.KALSHI,
                         market_id=ticker,
@@ -366,12 +407,14 @@ class KalshiConnector(BaseConnector):
                             _parse_date_from_kalshi_ticker(event_ticker)
                             or _parse_date_from_iso(m.get("close_time") or m.get("expiration_time"))
                         ),
+                        line=s1_line,
                         url=f"https://kalshi.com/events/{event_ticker.lower()}",
                         raw_data={
                             "yes_team": yes_team,
                             "no_sub_title": no_sub,
                             "event_ticker": event_ticker,
                             "series_ticker": m.get("series_ticker", ""),
+                            "market_subtype": s1_subtype,
                         },
                     )
 
@@ -540,6 +583,9 @@ class KalshiConnector(BaseConnector):
         event_ticker = m.get("event_ticker", "")
         series_ticker = m.get("series_ticker", "")
 
+        # Detect spread/OU subtype and line value
+        market_subtype, line_value = _detect_market_subtype(ticker, title)
+
         if title.lower().startswith("will "):
             team_a = self._extract_team_from_question(title)
             team_b = ""
@@ -598,12 +644,14 @@ class KalshiConnector(BaseConnector):
             sport=sport,
             game_date=game_date,
             event_group=event_group,
+            line=line_value,
             url=f"https://kalshi.com/events/{event_ticker.lower()}",
             raw_data={
                 "yes_team": yes_team,
                 "no_sub_title": no_sub,
                 "event_ticker": event_ticker,
                 "series_ticker": series_ticker,
+                "market_subtype": market_subtype,
             },
         )
 
@@ -661,6 +709,29 @@ class KalshiConnector(BaseConnector):
         except Exception:
             logger.exception(f"Error fetching Kalshi price for {market_id}")
             return None
+
+    async def poll_active_markets(self, market_ids: list[str]) -> dict[str, MarketPrice]:
+        """Batch fetch fresh prices for specific market IDs (used between full scans)."""
+        results: dict[str, MarketPrice] = {}
+        if not market_ids:
+            return results
+
+        _sem = asyncio.Semaphore(5)
+
+        async def _fetch_one(mid: str) -> tuple[str, MarketPrice | None]:
+            async with _sem:
+                price = await self.fetch_price(mid)
+                return mid, price
+
+        tasks = [_fetch_one(mid) for mid in market_ids]
+        fetched = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in fetched:
+            if isinstance(res, Exception):
+                continue
+            mid, price = res
+            if price:
+                results[mid] = price
+        return results
 
     @staticmethod
     def _align_yes_team(

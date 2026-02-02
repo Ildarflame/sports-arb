@@ -33,6 +33,10 @@
         <div class="metric-value" style="color: var(--red);">{{ data.suspicious_count }}</div>
         <div class="metric-label">Suspicious</div>
     </div>
+    <div class="metric">
+        <div class="metric-value">{{ data.avg_lifetime_min|default(0) }}m</div>
+        <div class="metric-label">Avg Lifetime</div>
+    </div>
 </div>
 
 <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1.5rem;">
@@ -86,6 +90,25 @@
             <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
         </div>
         {% endfor %}
+    </div>
+
+    {# Lifetime Distribution #}
+    <div class="card">
+        <h2>Arb Lifetime</h2>
+        {% if data.lifetime_distribution %}
+        {% set max_lt = data.lifetime_distribution.values()|list|max if data.lifetime_distribution.values()|list|max > 0 else 1 %}
+        {% for bucket, count in data.lifetime_distribution.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 55px; font-size: 0.75rem; text-align: right; color: var(--text-dim);">{{ bucket }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ (count / max_lt * 100)|round }}%; height: 100%; background: #8b5cf6; border-radius: 3px;"></div>
+            </div>
+            <span style="width: 40px; font-size: 0.75rem; color: var(--text);">{{ count }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state"><p>No lifetime data yet</p></div>
+        {% endif %}
     </div>
 
     {# Daily Timeline (last 7 days) #}

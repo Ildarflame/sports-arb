@@ -34,6 +34,7 @@ class Market(BaseModel):
     sport: str = ""  # e.g. "soccer", "nba", "nhl", "tennis", "esports"
     game_date: date | None = None  # date of the game (for daily matches)
     event_group: str = ""  # tournament/award identifier for futures matching
+    line: float | None = None  # spread/total line value (e.g., -3.5, 220.5)
     url: str = ""
     price: MarketPrice | None = None
     raw_data: dict = Field(default_factory=dict)

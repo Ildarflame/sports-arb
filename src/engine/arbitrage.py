@@ -72,6 +72,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
 
     poly_url = poly_market.url or ""
     kalshi_url = kalshi_market.url or ""
+    market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
 
     # Skip markets with volume below threshold
     poly_vol = poly_market.price.volume if poly_market.price else 0
@@ -151,6 +152,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "midpoint_cost": round(midpoint_cost_1, 4),
                     "exec_cost": round(exec_cost_1, 4),
                     "executable": has_exec_d1,
+                    "market_subtype": market_subtype,
                 },
             )
 
@@ -197,6 +199,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "midpoint_cost": round(midpoint_cost_2, 4),
                     "exec_cost": round(exec_cost_2, 4),
                     "executable": has_exec_d2,
+                    "market_subtype": market_subtype,
                 },
             )
 
@@ -220,16 +223,67 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
             )
 
         # Compute confidence: high/medium/low based on data quality
-        has_exec = best_opp.details.get("executable", False)
-        min_vol = min(poly_vol or 0, kalshi_vol or 0)
-        max_vol = max(poly_vol or 0, kalshi_vol or 0)
-        narrow_spread = spread_pct is not None and spread_pct < 10
+        has_poly_exec = bool(pp.yes_ask and pp.yes_bid)
+        has_kalshi_exec = bool(kp.yes_ask and kp.yes_bid)
+        has_both_exec = has_poly_exec and has_kalshi_exec
+        combined_vol = (poly_vol or 0) + (kalshi_vol or 0)
+        narrow_spread = spread_pct is not None and spread_pct < 15
 
-        if has_exec and max_vol > 5000 and narrow_spread:
+        best_opp.details["has_poly_exec"] = has_poly_exec
+        best_opp.details["has_kalshi_exec"] = has_kalshi_exec
+
+        if has_both_exec and combined_vol > 5000 and narrow_spread:
             best_opp.details["confidence"] = "high"
-        elif has_exec or max_vol > 1000:
+        elif (has_poly_exec or has_kalshi_exec) or combined_vol > 1000:
             best_opp.details["confidence"] = "medium"
         else:
             best_opp.details["confidence"] = "low"
 
     return best_opp
+
+
+def calculate_bet_sizes(
+    yes_price: float,
+    no_price: float,
+    yes_platform: Platform,
+    no_platform: Platform,
+    bankroll: float = 100.0,
+) -> dict:
+    """Calculate optimal bet sizes for an arbitrage opportunity.
+
+    For a binary arb (YES on one platform + NO on another), allocate
+    bankroll proportionally so that guaranteed profit is maximized.
+
+    Returns dict with yes_bet, no_bet, guaranteed_profit, roi_on_capital.
+    """
+    fee_yes = FEES.get(yes_platform, 0.02)
+    fee_no = FEES.get(no_platform, 0.02)
+
+    # Cost per unit including fees
+    cost_yes = yes_price * (1 + fee_yes)
+    cost_no = no_price * (1 + fee_no)
+    total_cost_per_unit = cost_yes + cost_no
+
+    if total_cost_per_unit <= 0 or total_cost_per_unit >= 1.0:
+        # No arb or invalid
+        units = bankroll / max(total_cost_per_unit, 0.01)
+        return {
+            "yes_bet": round(cost_yes * units, 2),
+            "no_bet": round(cost_no * units, 2),
+            "guaranteed_profit": round((1.0 - total_cost_per_unit) * units, 2),
+            "roi_on_capital": round((1.0 - total_cost_per_unit) / total_cost_per_unit * 100, 2) if total_cost_per_unit > 0 else 0,
+        }
+
+    # Buy `units` contracts: each pays $1, costs total_cost_per_unit
+    units = bankroll / total_cost_per_unit
+    yes_bet = round(cost_yes * units, 2)
+    no_bet = round(cost_no * units, 2)
+    profit = round((1.0 - total_cost_per_unit) * units, 2)
+    roi = round((1.0 - total_cost_per_unit) / total_cost_per_unit * 100, 2)
+
+    return {
+        "yes_bet": yes_bet,
+        "no_bet": no_bet,
+        "guaranteed_profit": profit,
+        "roi_on_capital": roi,
+    }

@@ -29,10 +29,26 @@ CREATE TABLE IF NOT EXISTS opportunities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_opps_active ON opportunities(still_active, found_at);
+
+CREATE TABLE IF NOT EXISTS roi_snapshots (
+    opp_id TEXT NOT NULL,
+    roi REAL NOT NULL,
+    snapped_at TEXT NOT NULL,
+    FOREIGN KEY (opp_id) REFERENCES opportunities(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_roi_snap ON roi_snapshots(opp_id, snapped_at);
 """
 
 # Migration: add sport column if missing (for existing databases)
 _MIGRATION_ADD_SPORT = "ALTER TABLE opportunities ADD COLUMN sport TEXT DEFAULT ''"
+
+# Migration: add lifetime tracking columns
+_MIGRATION_ADD_LIFETIME = [
+    "ALTER TABLE opportunities ADD COLUMN first_seen TEXT",
+    "ALTER TABLE opportunities ADD COLUMN last_seen TEXT",
+    "ALTER TABLE opportunities ADD COLUMN deactivated_at TEXT",
+]
 
 
 class Database:
@@ -45,10 +61,11 @@ class Database:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
         # Run migrations for existing databases
-        try:
-            await self._db.execute(_MIGRATION_ADD_SPORT)
-        except Exception:
-            pass  # Column already exists
+        for migration in [_MIGRATION_ADD_SPORT] + _MIGRATION_ADD_LIFETIME:
+            try:
+                await self._db.execute(migration)
+            except Exception:
+                pass  # Column already exists
         # One-time cleanup: purge legacy garbage data (ROI > 50% = stale/illiquid artifacts)
         cur = await self._db.execute(
             "DELETE FROM opportunities WHERE roi_after_fees > 50 AND still_active = 0"
@@ -148,6 +165,7 @@ class Database:
         return dict(row) if row else None
 
     async def save_opportunity(self, opp: ArbitrageOpportunity, sport: str = "") -> str:
+        now_iso = datetime.utcnow().isoformat()
         # Dedup: update existing active arb for same key instead of inserting
         existing = await self.find_active_by_key(
             opp.team_a, opp.platform_buy_yes.value, opp.platform_buy_no.value,
@@ -158,13 +176,14 @@ class Database:
                 """UPDATE opportunities
                    SET yes_price = ?, no_price = ?, total_cost = ?,
                        profit_pct = ?, roi_after_fees = ?,
-                       found_at = ?, details = ?, sport = ?
+                       found_at = ?, details = ?, sport = ?,
+                       last_seen = ?
                    WHERE id = ?""",
                 (
                     opp.yes_price, opp.no_price, opp.total_cost,
                     opp.profit_pct, opp.roi_after_fees,
                     opp.found_at.isoformat(), json.dumps(opp.details),
-                    sport, opp.id,
+                    sport, now_iso, opp.id,
                 ),
             )
             return opp.id
@@ -175,8 +194,9 @@ class Database:
             """INSERT OR REPLACE INTO opportunities
                (id, event_title, team_a, team_b, platform_buy_yes, platform_buy_no,
                 yes_price, no_price, total_cost, profit_pct, roi_after_fees,
-                found_at, still_active, details, sport)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                found_at, still_active, details, sport,
+                first_seen, last_seen)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 opp.id, opp.event_title, opp.team_a, opp.team_b,
                 opp.platform_buy_yes.value, opp.platform_buy_no.value,
@@ -184,6 +204,7 @@ class Database:
                 opp.profit_pct, opp.roi_after_fees,
                 opp.found_at.isoformat(), int(opp.still_active),
                 json.dumps(opp.details), sport,
+                now_iso, now_iso,
             ),
         )
         return opp.id
@@ -218,19 +239,22 @@ class Database:
         }
 
     async def deactivate_opportunity(self, opp_id: str) -> None:
+        now_iso = datetime.utcnow().isoformat()
         await self._db.execute(
-            "UPDATE opportunities SET still_active = 0 WHERE id = ?", (opp_id,)
+            "UPDATE opportunities SET still_active = 0, deactivated_at = ? WHERE id = ?",
+            (now_iso, opp_id),
         )
 
     async def deactivate_by_key(
         self, team_a: str, platform_yes: str, platform_no: str,
     ) -> int:
         """Deactivate ALL active opportunities matching the given key."""
+        now_iso = datetime.utcnow().isoformat()
         cursor = await self._db.execute(
-            """UPDATE opportunities SET still_active = 0
+            """UPDATE opportunities SET still_active = 0, deactivated_at = ?
                WHERE still_active = 1
                  AND team_a = ? AND platform_buy_yes = ? AND platform_buy_no = ?""",
-            (team_a, platform_yes, platform_no),
+            (now_iso, team_a, platform_yes, platform_no),
         )
         return cursor.rowcount
 
@@ -318,6 +342,34 @@ class Database:
         )
         result["daily_arbs"] = {row[0]: row[1] for row in await cur.fetchall()}
 
+        # Lifetime stats (for opportunities that have been deactivated with lifetime tracking)
+        cur = await self._db.execute(
+            """SELECT AVG(julianday(deactivated_at) - julianday(first_seen)) * 24 * 60
+               FROM opportunities
+               WHERE deactivated_at IS NOT NULL AND first_seen IS NOT NULL"""
+        )
+        row = await cur.fetchone()
+        result["avg_lifetime_min"] = round(row[0] or 0, 1)
+
+        # Lifetime distribution
+        lifetime_dist = {"< 1min": 0, "1-5min": 0, "5-30min": 0, "30min+": 0}
+        cur = await self._db.execute(
+            """SELECT (julianday(deactivated_at) - julianday(first_seen)) * 24 * 60 as mins
+               FROM opportunities
+               WHERE deactivated_at IS NOT NULL AND first_seen IS NOT NULL"""
+        )
+        for row in await cur.fetchall():
+            mins = row[0] or 0
+            if mins < 1:
+                lifetime_dist["< 1min"] += 1
+            elif mins < 5:
+                lifetime_dist["1-5min"] += 1
+            elif mins < 30:
+                lifetime_dist["5-30min"] += 1
+            else:
+                lifetime_dist["30min+"] += 1
+        result["lifetime_distribution"] = lifetime_dist
+
         # Recent 20 opportunities
         cur = await self._db.execute(
             "SELECT * FROM opportunities ORDER BY found_at DESC LIMIT 20"
@@ -325,6 +377,130 @@ class Database:
         result["recent"] = [dict(r) for r in await cur.fetchall()]
 
         return result
+
+    async def save_roi_snapshot(self, opp_id: str, roi: float) -> None:
+        """Record a ROI snapshot for an active opportunity."""
+        now_iso = datetime.utcnow().isoformat()
+        await self._db.execute(
+            "INSERT INTO roi_snapshots (opp_id, roi, snapped_at) VALUES (?, ?, ?)",
+            (opp_id, roi, now_iso),
+        )
+
+    async def get_roi_history(self, opp_id: str) -> list[dict]:
+        """Return ROI time series for an opportunity."""
+        cursor = await self._db.execute(
+            "SELECT roi, snapped_at FROM roi_snapshots WHERE opp_id = ? ORDER BY snapped_at",
+            (opp_id,),
+        )
+        return [{"roi": r[0], "time": r[1]} for r in await cursor.fetchall()]
+
+    async def get_historical_opps(self, days: int = 30) -> list[dict]:
+        """Return all opportunities with lifetime data for simulation."""
+        cursor = await self._db.execute(
+            """SELECT * FROM opportunities
+               WHERE found_at >= datetime('now', ?)
+               ORDER BY found_at""",
+            (f"-{days} days",),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def simulate_pnl(
+        self,
+        bankroll: float = 1000.0,
+        min_roi: float = 1.0,
+        min_confidence: str = "low",
+        days: int = 30,
+    ) -> dict:
+        """Simulate P&L from historical opportunities."""
+        opps = await self.get_historical_opps(days)
+
+        _conf_order = {"high": 0, "medium": 1, "low": 2}
+        min_conf_level = _conf_order.get(min_confidence, 2)
+
+        total_bets = 0
+        total_profit = 0.0
+        by_sport: dict[str, float] = {}
+        by_day: dict[str, float] = {}
+        best_day_profit = 0.0
+        worst_day_profit = 0.0
+        lifetimes: list[float] = []
+
+        for opp in opps:
+            roi = opp.get("roi_after_fees", 0) or 0
+            if roi < min_roi:
+                continue
+
+            details = opp.get("details", "{}")
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except (json.JSONDecodeError, TypeError):
+                    details = {}
+            conf = details.get("confidence", "low")
+            if _conf_order.get(conf, 2) > min_conf_level:
+                continue
+
+            # Calculate profit for this bet
+            total_cost = opp.get("total_cost", 0) or 0
+            if total_cost <= 0 or total_cost >= 1:
+                continue
+
+            units = bankroll / total_cost
+            profit = (1.0 - total_cost) * units
+            total_profit += profit
+            total_bets += 1
+
+            sport = opp.get("sport", "unknown") or "unknown"
+            by_sport[sport] = by_sport.get(sport, 0) + profit
+
+            found = opp.get("found_at", "")
+            day = found[:10] if found else "unknown"
+            by_day[day] = by_day.get(day, 0) + profit
+
+            # Lifetime tracking
+            first = opp.get("first_seen")
+            deact = opp.get("deactivated_at")
+            if first and deact:
+                try:
+                    from datetime import datetime as _dt
+                    f_dt = _dt.fromisoformat(first)
+                    d_dt = _dt.fromisoformat(deact)
+                    lifetimes.append((d_dt - f_dt).total_seconds() / 60)
+                except (ValueError, TypeError):
+                    pass
+
+        avg_hold = sum(lifetimes) / len(lifetimes) if lifetimes else 0
+        for day, profit in by_day.items():
+            if profit > best_day_profit:
+                best_day_profit = profit
+            if profit < worst_day_profit:
+                worst_day_profit = profit
+
+        return {
+            "total_bets": total_bets,
+            "total_profit": round(total_profit, 2),
+            "roi_on_capital": round(total_profit / bankroll * 100, 2) if bankroll > 0 else 0,
+            "avg_hold_min": round(avg_hold, 1),
+            "by_sport": {k: round(v, 2) for k, v in sorted(by_sport.items(), key=lambda x: -x[1])},
+            "by_day": by_day,
+            "best_day": round(best_day_profit, 2),
+            "worst_day": round(worst_day_profit, 2),
+            "bankroll": bankroll,
+            "min_roi": min_roi,
+            "min_confidence": min_confidence,
+            "days": days,
+        }
+
+    async def cleanup_old_snapshots(self, days: int = 7) -> int:
+        """Delete ROI snapshots for deactivated arbs older than `days`."""
+        cursor = await self._db.execute(
+            """DELETE FROM roi_snapshots WHERE opp_id IN (
+                SELECT id FROM opportunities
+                WHERE still_active = 0 AND deactivated_at < datetime('now', ?)
+            )""",
+            (f"-{days} days",),
+        )
+        return cursor.rowcount
 
     async def cleanup_old(self, days: int = 7) -> int:
         """Delete inactive opportunities older than `days` days."""

@@ -314,6 +314,71 @@ def _apply_ws_cache(events: list[SportEvent]) -> int:
     return updated
 
 
+def _get_event_sport(event: SportEvent) -> str:
+    """Extract sport from a SportEvent's markets."""
+    pm = event.markets.get(Platform.POLYMARKET)
+    km = event.markets.get(Platform.KALSHI)
+    return (pm.sport if pm else "") or (km.sport if km else "") or "other"
+
+
+async def _process_sport_group(
+    sport: str,
+    events: list[SportEvent],
+    poly: PolymarketConnector,
+    kalshi: KalshiConnector,
+) -> tuple[list[tuple[SportEvent, ArbitrageOpportunity]], float]:
+    """Process arb screening + book fetching + calculation for a sport group.
+
+    Returns (list of (event, opportunity) pairs, duration in seconds).
+    """
+    start = time.monotonic()
+    results: list[tuple[SportEvent, ArbitrageOpportunity]] = []
+
+    # Screen candidates by midpoint cost
+    arb_candidates: list[SportEvent] = []
+    for event in events:
+        if _is_stale_event(event):
+            continue
+        pm = event.markets.get(Platform.POLYMARKET)
+        km = event.markets.get(Platform.KALSHI)
+        if not (pm and km and pm.price and km.price):
+            continue
+        pp, kp = pm.price, km.price
+        if not _is_valid_price(pp) or not _is_valid_price(kp):
+            continue
+        if kp.yes_price <= 0.02 or kp.yes_price >= 0.98:
+            continue
+        if pp.yes_price <= 0.02 or pp.yes_price >= 0.98:
+            continue
+        if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
+            continue
+        if pp.yes_price == 0.5 and pp.no_price == 0.5 and not event.team_b:
+            continue
+        if pm.market_type == "futures" or km.market_type == "futures":
+            continue
+        if event.teams_swapped:
+            cost1 = pp.yes_price + (1 - kp.yes_price)
+            cost2 = kp.no_price + pp.no_price
+        else:
+            cost1 = pp.yes_price + kp.no_price
+            cost2 = kp.yes_price + pp.no_price
+        if cost1 < 1.02 or cost2 < 1.02:
+            arb_candidates.append(event)
+
+    # Fetch order books for candidates
+    if arb_candidates:
+        await fetch_books_for_candidates(poly, kalshi, arb_candidates)
+
+    # Calculate arbitrage
+    for event in events:
+        opp = calculate_arbitrage(event)
+        if opp:
+            results.append((event, opp))
+
+    duration = time.monotonic() - start
+    return results, duration
+
+
 async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
     """Main scanning loop: fetch events, match, check arbitrage."""
     _scan_count = 0
@@ -391,62 +456,37 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 # Pass 1: Fetch midpoint prices for all matched events
                 await fetch_and_update_prices(poly, kalshi, matched)
 
-                # Pass 1.5: Screen candidates by midpoint cost (with 2% buffer for bid/ask spread)
-                arb_candidates: list[SportEvent] = []
+                # Group events by sport for parallel processing
+                from collections import defaultdict as _defaultdict
+                sport_groups: dict[str, list[SportEvent]] = _defaultdict(list)
                 for event in matched:
-                    # Skip stale events (game already played)
-                    if _is_stale_event(event):
-                        continue
-                    pm = event.markets.get(Platform.POLYMARKET)
-                    km = event.markets.get(Platform.KALSHI)
-                    if pm and km and pm.price and km.price:
-                        pp, kp = pm.price, km.price
-                        # Skip placeholder 50/50 prices (no real data)
-                        if not _is_valid_price(pp) or not _is_valid_price(kp):
-                            continue
-                        # Skip extreme prices (<=2c or >=98c) — illiquid long-shot futures
-                        if kp.yes_price <= 0.02 or kp.yes_price >= 0.98:
-                            continue
-                        if pp.yes_price <= 0.02 or pp.yes_price >= 0.98:
-                            continue
-                        # Skip dead markets where both platforms have zero volume
-                        if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
-                            continue
-                        # Skip futures with Poly at exactly 50/50 — default/broken pricing
-                        if (pp.yes_price == 0.5 and pp.no_price == 0.5
-                                and not event.team_b):
-                            continue
-                        # Skip futures from book fetching — only game markets have actionable books
-                        if pm.market_type == "futures" or km.market_type == "futures":
-                            continue
-                        if event.teams_swapped:
-                            # Swapped: Kalshi YES = opposite team, so invert
-                            cost1 = pp.yes_price + (1 - kp.yes_price)
-                            cost2 = kp.no_price + pp.no_price
-                        else:
-                            cost1 = pp.yes_price + kp.no_price
-                            cost2 = kp.yes_price + pp.no_price
-                        if cost1 < 1.02 or cost2 < 1.02:
-                            arb_candidates.append(event)
+                    sport_groups[_get_event_sport(event)].append(event)
 
-                # Pass 2: Fetch order books only for candidates (bid/ask precision)
-                if arb_candidates:
-                    logger.info(
-                        f"Arb candidates: {len(arb_candidates)}/{len(matched)} "
-                        f"passed midpoint screen, fetching order books"
-                    )
-                    await fetch_books_for_candidates(poly, kalshi, arb_candidates)
+                # Pass 2+3: Process each sport group in parallel
+                sport_tasks = {
+                    sport: _process_sport_group(sport, events, poly, kalshi)
+                    for sport, events in sport_groups.items()
+                }
+                sport_results = await asyncio.gather(
+                    *sport_tasks.values(), return_exceptions=True,
+                )
 
-                # Track which arbs are found this scan (for deactivation)
+                # Collect results and per-sport timing
                 current_arb_keys: set[tuple[str, str, str]] = set()
-                # Track game-level dedup: both team perspectives of the same game collapse
                 seen_game_keys: set[tuple[str, ...]] = set()
+                sport_timings: dict[str, float] = {}
 
-                # Pass 3: Calculate arbitrage with executable prices
-                for event in matched:
-                    opp = calculate_arbitrage(event)
-                    if opp and opp.roi_after_fees >= settings.min_arb_percent:
-                        # Skip suspicious arbs entirely — don't save to DB
+                for sport_name, result in zip(sport_tasks.keys(), sport_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"Sport worker {sport_name} failed: {result}")
+                        continue
+
+                    arb_results, duration = result
+                    sport_timings[sport_name] = round(duration, 2)
+
+                    for event, opp in arb_results:
+                        if not (opp.roi_after_fees >= settings.min_arb_percent):
+                            continue
                         if opp.roi_after_fees > settings.max_arb_percent:
                             logger.warning(
                                 f"SUSPICIOUS ARB (skipped, ROI>{settings.max_arb_percent}%): "
@@ -454,7 +494,6 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             )
                             continue
 
-                        # Deduplicate by game: both team perspectives produce the same key
                         game_key = tuple(sorted([
                             opp.team_a.lower().strip(),
                             opp.team_b.lower().strip(),
@@ -470,7 +509,6 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         )
                         current_arb_keys.add(arb_key)
 
-                        # Derive sport from event markets
                         _pm = event.markets.get(Platform.POLYMARKET)
                         _km = event.markets.get(Platform.KALSHI)
                         _sport = (_pm.sport if _pm else "") or (_km.sport if _km else "")
@@ -484,6 +522,19 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             "roi": opp.roi_after_fees,
                             "cost": opp.total_cost,
                         })
+
+                # Log per-sport timing
+                app_state["scan_metrics_by_sport"] = sport_timings
+                if sport_timings:
+                    timing_str = ", ".join(f"{s}={t}s" for s, t in sorted(sport_timings.items()))
+                    logger.info(f"Sport workers: {timing_str}")
+
+                # Save ROI snapshots for all active arbs
+                active_opps = await db.get_active_opportunities(limit=200)
+                for active_opp in active_opps:
+                    await db.save_roi_snapshot(
+                        active_opp["id"], active_opp.get("roi_after_fees", 0)
+                    )
 
                 # Deactivate stale opportunities not found this scan
                 active_keys = await db.get_active_opp_keys()
@@ -501,7 +552,12 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             if tag_discovery_age >= 3600:  # 60 minutes
                 app_state["last_tag_discovery"] = time.monotonic()
                 try:
-                    await poly.discover_sports_tags()
+                    new_tags = await poly.discover_sports_tags()
+                    if new_tags:
+                        logger.info(
+                            f"Discovery: {len(new_tags)} new tags added, "
+                            f"{len(poly._dynamic_tag_slugs)} total dynamic tags"
+                        )
                 except Exception:
                     logger.exception("Tag discovery failed")
 
@@ -512,8 +568,11 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             _scan_count += 1
             if _scan_count % 100 == 0:
                 deleted = await db.cleanup_old(days=7)
-                if deleted:
-                    logger.info(f"DB cleanup: removed {deleted} old inactive opportunities")
+                snap_deleted = await db.cleanup_old_snapshots(days=7)
+                if deleted or snap_deleted:
+                    logger.info(
+                        f"DB cleanup: removed {deleted} old opps, {snap_deleted} old snapshots"
+                    )
                 await db.commit()
 
             scan_duration = time.monotonic() - scan_start
@@ -524,6 +583,55 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
             logger.exception("Error in scan loop")
 
         await asyncio.sleep(settings.poll_interval)
+
+
+async def kalshi_price_poller(kalshi: KalshiConnector) -> None:
+    """Background task: poll fresh Kalshi prices for markets in active arbs."""
+    while app_state["running"]:
+        try:
+            await asyncio.sleep(30)  # Poll every 30 seconds
+            if not app_state["running"]:
+                break
+
+            # Get active opportunities to find Kalshi market IDs
+            active_opps = await db.get_active_opportunities(limit=100)
+            if not active_opps:
+                continue
+
+            # Collect Kalshi market IDs from matched events that have active arbs
+            arb_teams = {opp.get("team_a", "") for opp in active_opps}
+            matched = app_state.get("matched_events", [])
+            kalshi_ids: list[str] = []
+            kalshi_event_map: dict[str, SportEvent] = {}
+
+            for event in matched:
+                if event.team_a not in arb_teams:
+                    continue
+                km = event.markets.get(Platform.KALSHI)
+                if km:
+                    kalshi_ids.append(km.market_id)
+                    kalshi_event_map[km.market_id] = event
+
+            if not kalshi_ids:
+                continue
+
+            # Poll fresh prices
+            fresh_prices = await kalshi.poll_active_markets(kalshi_ids)
+            updated = 0
+            for mid, price in fresh_prices.items():
+                event = kalshi_event_map.get(mid)
+                if event:
+                    km = event.markets.get(Platform.KALSHI)
+                    if km:
+                        km.price = price
+                        updated += 1
+
+            if updated:
+                logger.debug(f"Kalshi poller: refreshed {updated}/{len(kalshi_ids)} prices")
+
+        except Exception:
+            logger.exception("Kalshi price poller error")
+            await asyncio.sleep(10)
 
 
 async def run_app() -> None:
@@ -559,12 +667,13 @@ async def run_app() -> None:
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    # Run web server, scan loop, and WS price listener concurrently
+    # Run web server, scan loop, WS price listener, and Kalshi poller concurrently
     try:
         await asyncio.gather(
             server.serve(),
             scan_loop(poly, kalshi),
             ws_price_listener(poly),
+            kalshi_price_poller(kalshi),
         )
     finally:
         await poly.disconnect()

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div style="margin-bottom: 1rem;">
+    <a href="/" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">&larr; Back to Dashboard</a>
+    &middot;
+    <a href="/analytics" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">Analytics</a>
+</div>
+
+<h2 style="font-size: 1.1rem; margin-bottom: 1rem;">P&L Simulator</h2>
+
+{# Input form #}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="GET" action="/simulator" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.3rem;">Bankroll ($)</label>
+            <input type="number" name="bankroll" value="{{ data.bankroll }}" step="100" min="10"
+                   style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; width: 100px; font-family: inherit;">
+        </div>
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.3rem;">Min ROI (%)</label>
+            <input type="number" name="min_roi" value="{{ data.min_roi }}" step="0.5" min="0"
+                   style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; width: 80px; font-family: inherit;">
+        </div>
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.3rem;">Min Confidence</label>
+            <select name="min_confidence"
+                    style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; font-family: inherit;">
+                <option value="low" {{ 'selected' if data.min_confidence == 'low' }}>Low+</option>
+                <option value="medium" {{ 'selected' if data.min_confidence == 'medium' }}>Medium+</option>
+                <option value="high" {{ 'selected' if data.min_confidence == 'high' }}>High only</option>
+            </select>
+        </div>
+        <div>
+            <label style="font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.3rem;">Days</label>
+            <input type="number" name="days" value="{{ data.days }}" step="1" min="1" max="365"
+                   style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px; width: 60px; font-family: inherit;">
+        </div>
+        <button type="submit"
+                style="background: var(--blue); color: white; border: none; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; font-family: inherit; font-weight: 600;">
+            Simulate
+        </button>
+    </form>
+</div>
+
+{# Summary cards #}
+<div class="metrics">
+    <div class="metric">
+        <div class="metric-value">{{ data.total_bets }}</div>
+        <div class="metric-label">Total Bets</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value {{ 'arb-positive' if data.total_profit > 0 else 'arb-negative' }}">${{ "%.2f"|format(data.total_profit) }}</div>
+        <div class="metric-label">Total Profit</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value {{ 'arb-positive' if data.roi_on_capital > 0 else 'arb-negative' }}">{{ data.roi_on_capital }}%</div>
+        <div class="metric-label">ROI on Capital</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value">{{ data.avg_hold_min }}m</div>
+        <div class="metric-label">Avg Hold Time</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value arb-positive">${{ "%.2f"|format(data.best_day) }}</div>
+        <div class="metric-label">Best Day</div>
+    </div>
+    <div class="metric">
+        <div class="metric-value" style="color: var(--red);">${{ "%.2f"|format(data.worst_day) }}</div>
+        <div class="metric-label">Worst Day</div>
+    </div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    {# By Sport #}
+    <div class="card">
+        <h2>Profit by Sport</h2>
+        {% if data.by_sport %}
+        {% set max_sport_val = data.by_sport.values()|list|map('abs')|max if data.by_sport else 1 %}
+        {% for sport, profit in data.by_sport.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 70px; font-size: 0.75rem; text-align: right; color: var(--text-dim);">{{ sport|upper }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ ((profit|abs) / (max_sport_val if max_sport_val > 0 else 1) * 100)|round }}%; height: 100%; background: {{ 'var(--green)' if profit > 0 else 'var(--red)' }}; border-radius: 3px;"></div>
+            </div>
+            <span style="width: 60px; font-size: 0.75rem; color: {{ 'var(--green)' if profit > 0 else 'var(--red)' }};">${{ "%.2f"|format(profit) }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state"><p>No data</p></div>
+        {% endif %}
+    </div>
+
+    {# Daily P&L #}
+    <div class="card">
+        <h2>Daily P&L</h2>
+        {% if data.by_day %}
+        {% set max_day_val = data.by_day.values()|list|map('abs')|max if data.by_day else 1 %}
+        {% for day, profit in data.by_day.items() %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="width: 70px; font-size: 0.72rem; text-align: right; color: var(--text-dim);">{{ day }}</span>
+            <div style="flex: 1; background: var(--border); border-radius: 3px; height: 18px; overflow: hidden;">
+                <div style="width: {{ ((profit|abs) / (max_day_val if max_day_val > 0 else 1) * 100)|round }}%; height: 100%; background: {{ 'var(--green)' if profit > 0 else 'var(--red)' }}; border-radius: 3px;"></div>
+            </div>
+            <span style="width: 60px; font-size: 0.75rem; color: {{ 'var(--green)' if profit > 0 else 'var(--red)' }};">${{ "%.2f"|format(profit) }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state"><p>No data</p></div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

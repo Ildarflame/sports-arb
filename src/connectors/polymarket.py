@@ -147,6 +147,30 @@ def _detect_sport_poly(event_title: str, tags: list[str] | None = None) -> str:
     return ""
 
 
+def _parse_line_value(text: str) -> float | None:
+    """Extract spread/total line from market text.
+
+    Patterns:
+      "Lakers -3.5", "+3.5", "Over 220.5", "Under 220.5"
+      "... by 3.5 or more"
+    """
+    # Spread: +/-N.5
+    m = re.search(r"([+-]\d+\.?\d*)", text)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    # Over/Under: "Over 220.5" or "Under 220.5"
+    m = re.search(r"(?:over|under|o/u|total)\s+(\d+\.?\d*)", text, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
 def _parse_game_date_from_question(question: str) -> date | None:
     """Extract date from 'win on 2026-02-01?' pattern."""
     m = re.search(r"on\s+(\d{4}-\d{2}-\d{2})", question)
@@ -169,6 +193,9 @@ def _parse_game_date_from_iso(dt_str: str | None) -> date | None:
 
 
 class PolymarketConnector(BaseConnector):
+    # Dynamic tags discovered at runtime (not persisted to code)
+    _dynamic_tag_slugs: set[str] = set()
+
     def __init__(self) -> None:
         self._http: httpx.AsyncClient | None = None
         self._ws = None
@@ -228,9 +255,10 @@ class PolymarketConnector(BaseConnector):
         seen_event_ids.update(sports_seen)
         sports_count = len(markets)
 
-        # Secondary fetch: extra tags in parallel batches of 5
+        # Secondary fetch: extra tags + dynamic tags in parallel batches of 5
         extra_count = 0
         _tag_sem = asyncio.Semaphore(5)
+        all_tags = list(self._EXTRA_TAG_SLUGS) + [t for t in self._dynamic_tag_slugs if t not in set(self._EXTRA_TAG_SLUGS)]
 
         async def _fetch_tag(tag: str) -> tuple[list[Market], set[str]]:
             async with _tag_sem:
@@ -239,7 +267,7 @@ class PolymarketConnector(BaseConnector):
                 )
 
         tag_results = await asyncio.gather(
-            *[_fetch_tag(tag) for tag in self._EXTRA_TAG_SLUGS],
+            *[_fetch_tag(tag) for tag in all_tags],
             return_exceptions=True,
         )
         for res in tag_results:
@@ -339,16 +367,34 @@ class PolymarketConnector(BaseConnector):
         for m in event_markets:
             sports_type = m.get("sportsMarketType", "")
 
-            # Only process moneyline markets for arbitrage
-            if sports_type and sports_type != "moneyline":
+            # Process moneyline, spread, and over/under markets
+            _ALLOWED_SPORTS_TYPES = {"moneyline", "spread", "over-under", "over_under", "total"}
+            if sports_type and sports_type not in _ALLOWED_SPORTS_TYPES:
                 continue
 
             # Classify: daily game vs futures
             mtype = "game" if sports_type else "futures"
 
+            # Determine sub-type for spread/OU
+            market_subtype = "moneyline"
+            if sports_type in ("spread",):
+                market_subtype = "spread"
+            elif sports_type in ("over-under", "over_under", "total"):
+                market_subtype = "over_under"
+
             outcomes = self._parse_json_field(m.get("outcomes", "[]"))
             prices = self._parse_json_field(m.get("outcomePrices", "[]"))
             tokens = self._parse_json_field(m.get("clobTokenIds", "[]"))
+
+            # Extract volume (Gamma API provides volume as string or number)
+            market_volume = 0.0
+            for vol_key in ("volume", "volumeNum"):
+                try:
+                    v = float(m.get(vol_key, 0) or 0)
+                    if v > market_volume:
+                        market_volume = v
+                except (ValueError, TypeError):
+                    pass
 
             if len(outcomes) != 2:
                 continue
@@ -368,6 +414,11 @@ class PolymarketConnector(BaseConnector):
 
             # Event group for futures matching
             event_group = event_title if mtype == "futures" else ""
+
+            # Parse line value for spread/OU markets
+            line_value = None
+            if market_subtype in ("spread", "over_under"):
+                line_value = _parse_line_value(question) or _parse_line_value(group_item_title)
 
             if neg_risk:
                 # 3-way soccer or multi-outcome futures:
@@ -404,7 +455,7 @@ class PolymarketConnector(BaseConnector):
                         m.get("endDate") or event.get("endDate")
                     )
 
-                price = self._build_price(prices)
+                price = self._build_price(prices, volume=market_volume)
                 markets.append(Market(
                     platform=Platform.POLYMARKET,
                     market_id=market_id_base,
@@ -417,6 +468,7 @@ class PolymarketConnector(BaseConnector):
                     sport=sport,
                     game_date=game_date,
                     event_group=event_group,
+                    line=line_value,
                     url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                     price=price,
                     raw_data={
@@ -426,6 +478,7 @@ class PolymarketConnector(BaseConnector):
                         "event_title": event_title,
                         "outcomes": outcomes,
                         "sports_market_type": sports_type,
+                        "market_subtype": market_subtype,
                         "neg_risk": True,
                     },
                 ))
@@ -448,6 +501,7 @@ class PolymarketConnector(BaseConnector):
                                 price = MarketPrice(
                                     yes_price=round(yes_p, 4),
                                     no_price=round(1.0 - yes_p, 4),
+                                    volume=market_volume,
                                     last_updated=datetime.now(UTC),
                                 )
                         except (ValueError, TypeError):
@@ -466,6 +520,7 @@ class PolymarketConnector(BaseConnector):
                         sport=sport,
                         game_date=game_date,
                         event_group=event_group,
+                        line=line_value,
                         url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                         price=price,
                         raw_data={
@@ -476,6 +531,7 @@ class PolymarketConnector(BaseConnector):
                             "outcomes": outcomes,
                             "outcome_index": i,
                             "sports_market_type": sports_type,
+                            "market_subtype": market_subtype,
                             "neg_risk": False,
                         },
                     ))
@@ -511,7 +567,7 @@ class PolymarketConnector(BaseConnector):
         return []
 
     @staticmethod
-    def _build_price(prices: list) -> MarketPrice | None:
+    def _build_price(prices: list, volume: float = 0) -> MarketPrice | None:
         """Build MarketPrice from a 2-element price list."""
         if len(prices) != 2:
             return None
@@ -522,6 +578,7 @@ class PolymarketConnector(BaseConnector):
                 return MarketPrice(
                     yes_price=yes_p,
                     no_price=no_p,
+                    volume=volume,
                     last_updated=datetime.now(UTC),
                 )
         except (ValueError, TypeError):
@@ -613,6 +670,14 @@ class PolymarketConnector(BaseConnector):
             data = resp.json()
             # Gamma API returns outcomePrices as JSON string or list
             prices = self._parse_json_field(data.get("outcomePrices", "[]"))
+            vol = 0.0
+            for vk in ("volume", "volumeNum"):
+                try:
+                    v = float(data.get(vk, 0) or 0)
+                    if v > vol:
+                        vol = v
+                except (ValueError, TypeError):
+                    pass
             if len(prices) == 2:
                 yes_p = float(prices[0])
                 no_p = float(prices[1])
@@ -622,6 +687,7 @@ class PolymarketConnector(BaseConnector):
                         no_price=round(no_p, 4),
                         yes_bid=float(data.get("bestBid", 0)) or None,
                         yes_ask=float(data.get("bestAsk", 0)) or None,
+                        volume=vol,
                         last_updated=datetime.now(UTC),
                     )
             return None
@@ -692,10 +758,11 @@ class PolymarketConnector(BaseConnector):
 
         Fetches recent events without tag filter, collects all tags,
         and logs any new ones not in _EXTRA_TAG_SLUGS.
+        Auto-adds qualifying tags (>= 3 events) to _dynamic_tag_slugs.
         Returns list of newly discovered tags.
         """
-        known_tags = set(self._EXTRA_TAG_SLUGS)
-        discovered_tags: set[str] = set()
+        known_tags = set(self._EXTRA_TAG_SLUGS) | self._dynamic_tag_slugs
+        tag_event_counts: dict[str, int] = {}
         new_tags: list[str] = []
 
         try:
@@ -720,27 +787,32 @@ class PolymarketConnector(BaseConnector):
                     for tag in tags:
                         slug = tag.get("slug", tag) if isinstance(tag, dict) else str(tag)
                         slug_lower = slug.lower()
-                        discovered_tags.add(slug_lower)
+                        tag_event_counts[slug_lower] = tag_event_counts.get(slug_lower, 0) + 1
 
                 if len(events) < 100:
                     break
 
             # Check for sports-related tags not in our known set
-            for tag in discovered_tags:
+            for tag, count in tag_event_counts.items():
                 if tag in known_tags:
                     continue
                 # Check if this tag overlaps with known sports patterns
                 for pattern in self._KNOWN_SPORTS_PATTERNS:
                     if pattern in tag or tag in pattern:
-                        if tag not in known_tags:
+                        # Only add tags with >= 3 active events
+                        if count >= 3:
                             new_tags.append(tag)
-                            logger.warning(f"New Polymarket sports tag discovered: {tag}")
+                            self._dynamic_tag_slugs.add(tag)
+                            logger.warning(f"Auto-added Polymarket tag: {tag} ({count} events)")
                         break
 
             if new_tags:
-                logger.info(f"Tag discovery: {len(new_tags)} new sports tags found: {new_tags}")
+                logger.info(
+                    f"Tag discovery: {len(new_tags)} new tags added, "
+                    f"{len(self._dynamic_tag_slugs)} total dynamic tags"
+                )
             else:
-                logger.debug(f"Tag discovery: scanned {len(discovered_tags)} tags, no new sports tags")
+                logger.debug(f"Tag discovery: scanned {len(tag_event_counts)} tags, no new sports tags")
 
         except Exception:
             logger.exception("Error during tag discovery")

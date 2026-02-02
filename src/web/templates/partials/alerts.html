@@ -51,12 +51,15 @@
         <span class="arb-roi">+{{ "%.2f"|format(roi) }}%</span>
         <span class="arb-meta">
             {% set conf = d.get('confidence', 'low') %}
+            {% set poly_exec_str = 'bid/ask' if d.get('has_poly_exec') else 'mid' %}
+            {% set kalshi_exec_str = 'bid/ask' if d.get('has_kalshi_exec') else 'mid' %}
+            {% set conf_tooltip = conf|upper ~ ': Poly $' ~ "{:,.0f}".format(pvol or 0) ~ ' vol, ' ~ poly_exec_str ~ ' | Kalshi $' ~ "{:,.0f}".format(kvol or 0) ~ ' vol, ' ~ kalshi_exec_str %}
             {% if conf == 'high' %}
-                <span class="micro-badge mb-conf-high" title="Both platforms have bid/ask, volume > $5k, spread < 10%">HIGH</span>
+                <span class="micro-badge mb-conf-high" title="{{ conf_tooltip }}">HIGH</span>
             {% elif conf == 'medium' %}
-                <span class="micro-badge mb-conf-med" title="One platform has bid/ask or volume > $1k">MED</span>
+                <span class="micro-badge mb-conf-med" title="{{ conf_tooltip }}">MED</span>
             {% else %}
-                <span class="micro-badge mb-conf-low" title="Midpoint only, low volume or no bid/ask data">LOW</span>
+                <span class="micro-badge mb-conf-low" title="{{ conf_tooltip }}">LOW</span>
             {% endif %}
             {% if d.get('spread_pct') is not none and d.get('spread_pct') > 10 %}
                 <span class="micro-badge mb-spread-wide" title="Spread: {{ "%.0f"|format(d.get('spread_pct')) }}%">WIDE</span>
@@ -64,9 +67,19 @@
             {% if found %}
                 <span class="micro-badge mb-age">{{ found }}</span>
             {% endif %}
+            {% if opp.id %}
+                <span class="micro-badge mb-age" style="cursor: pointer;"
+                      title="Click to view ROI history"
+                      hx-get="/partials/roi-history/{{ opp.id }}"
+                      hx-target="#roi-spark-{{ opp.id }}"
+                      hx-trigger="click once"
+                      hx-swap="innerHTML">ROI ↗</span>
+            {% endif %}
         </span>
     </summary>
     <div class="expand-body">
+        {# ROI history sparkline container #}
+        <div id="roi-spark-{{ opp.id }}" style="grid-column: 1 / -1;"></div>
         {# Left: How to execute #}
         <div>
             {% if is_suspicious %}
@@ -176,6 +189,26 @@
                 </tr>
                 {% endif %}
             </table>
+            {# Bet Size Calculator #}
+            <div style="margin-top: 0.8rem; padding: 0.5rem; background: rgba(59,130,246,0.08); border-radius: 4px; border: 1px solid rgba(59,130,246,0.2);">
+                <div style="font-size: 0.72rem; font-weight: 600; color: var(--blue); margin-bottom: 0.4rem;">Calculator ($100 bankroll)</div>
+                {% set fee_yes = 0.02 if buy_yes_plat == 'POLYMARKET' else 0.015 %}
+                {% set fee_no = 0.015 if buy_yes_plat == 'POLYMARKET' else 0.02 %}
+                {% set cost_yes_unit = yes_buy_price * (1 + fee_yes) %}
+                {% set cost_no_unit = no_buy_price * (1 + fee_no) %}
+                {% set total_unit = cost_yes_unit + cost_no_unit %}
+                {% if total_unit > 0 %}
+                    {% set units = 100.0 / total_unit %}
+                    {% set yes_bet = cost_yes_unit * units %}
+                    {% set no_bet = cost_no_unit * units %}
+                    {% set profit = (1.0 - total_unit) * units %}
+                    <div style="font-size: 0.75rem; line-height: 1.8;">
+                        Buy YES on {{ yes_plat_name }}: <strong>${{ "%.2f"|format(yes_bet) }}</strong><br>
+                        Buy NO on {{ no_plat_name }}: <strong>${{ "%.2f"|format(no_bet) }}</strong><br>
+                        Guaranteed profit: <strong style="color: var(--green);">${{ "%.2f"|format(profit) }}</strong>
+                    </div>
+                {% endif %}
+            </div>
         </div>
     </div>
 </details>

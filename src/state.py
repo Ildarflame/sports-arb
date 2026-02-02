@@ -18,4 +18,6 @@ app_state: dict = {
     "ws_update_count": 0,        # total WS price updates received
     # Tag discovery
     "last_tag_discovery": 0.0,   # monotonic timestamp of last tag discovery run
+    # Per-sport scan timing
+    "scan_metrics_by_sport": {},  # sport -> duration in seconds
 }

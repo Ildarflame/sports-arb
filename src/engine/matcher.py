@@ -627,9 +627,14 @@ def _sports_compatible(pm: Market, km: Market) -> bool:
     return True
 
 
-def _grouping_key(m: Market) -> tuple[str, str]:
-    """Return a grouping key for pre-filtering: (sport, market_type)."""
-    return (m.sport or "_any", m.market_type or "_any")
+def _market_subtype(m: Market) -> str:
+    """Return market subtype: moneyline, spread, or over_under."""
+    return m.raw_data.get("market_subtype", "moneyline")
+
+
+def _grouping_key(m: Market) -> tuple[str, str, str]:
+    """Return a grouping key for pre-filtering: (sport, market_type, subtype)."""
+    return (m.sport or "_any", m.market_type or "_any", _market_subtype(m))
 
 
 def _dedup_markets(markets: list[Market]) -> list[Market]:
@@ -667,8 +672,8 @@ def match_events(
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
 
-    # Pre-group Kalshi markets by (sport, market_type) for faster lookup
-    kalshi_groups: dict[tuple[str, str], list[Market]] = defaultdict(list)
+    # Pre-group Kalshi markets by (sport, market_type, subtype) for faster lookup
+    kalshi_groups: dict[tuple[str, str, str], list[Market]] = defaultdict(list)
     for km in kalshi_markets:
         if not km.team_a:
             continue
@@ -682,10 +687,11 @@ def match_events(
         # Candidate Kalshi markets: same group + wildcard groups
         candidates: list[Market] = []
         for k_key, k_list in kalshi_groups.items():
-            # Match if sport matches (or either is unknown) AND market_type matches
+            # Match if sport matches (or either is unknown) AND market_type AND subtype match
             sport_ok = (pm_key[0] == "_any" or k_key[0] == "_any" or pm_key[0] == k_key[0])
             type_ok = (pm_key[1] == "_any" or k_key[1] == "_any" or pm_key[1] == k_key[1])
-            if sport_ok and type_ok:
+            subtype_ok = (pm_key[2] == k_key[2])  # Exact subtype match required
+            if sport_ok and type_ok and subtype_ok:
                 candidates.extend(k_list)
 
         best_match: Market | None = None
@@ -704,6 +710,14 @@ def match_events(
             # Group filter for futures
             if pm.market_type == "futures" and km.market_type == "futures":
                 if not _groups_compatible(pm, km):
+                    continue
+
+            # Line filter for spread/OU — exact line match required
+            pm_subtype = _market_subtype(pm)
+            if pm_subtype in ("spread", "over_under"):
+                if pm.line is None or km.line is None:
+                    continue
+                if pm.line != km.line:
                     continue
 
             # Use the more specific sport for normalization

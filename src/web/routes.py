@@ -77,10 +77,22 @@ def _is_stale_event(event) -> bool:
     return False
 
 
-def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None = None) -> list:
+def _is_futures_event(event) -> bool:
+    """Check if event is a futures market."""
+    pm = event.markets.get(Platform.POLYMARKET)
+    km = event.markets.get(Platform.KALSHI)
+    pm_type = pm.market_type if pm else ""
+    km_type = km.market_type if km else ""
+    return pm_type == "futures" or km_type == "futures"
+
+
+def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None = None, hide_futures: bool = False) -> list:
     """Filter events by sport/min_roi and sort: matched by ROI desc, then Kalshi-only."""
     if sport:
         events = [e for e in events if _get_event_sport(e) == sport]
+
+    if hide_futures:
+        events = [e for e in events if not _is_futures_event(e)]
 
     # Remove stale events and placeholder-price junk
     cleaned = []
@@ -112,14 +124,18 @@ def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None
     matched = [e for e in events if e.matched]
     unmatched = [e for e in events if not e.matched]
 
-    # Sort matched events by best ROI descending
-    matched.sort(key=lambda e: _compute_best_roi(e), reverse=True)
+    # Sort matched events: games first (by ROI desc), then futures (by ROI desc)
+    matched_games = [e for e in matched if not _is_futures_event(e)]
+    matched_futures = [e for e in matched if _is_futures_event(e)]
+    matched_games.sort(key=lambda e: _compute_best_roi(e), reverse=True)
+    matched_futures.sort(key=lambda e: _compute_best_roi(e), reverse=True)
 
     if min_roi is not None:
-        matched = [e for e in matched if _compute_best_roi(e) >= min_roi]
+        matched_games = [e for e in matched_games if _compute_best_roi(e) >= min_roi]
+        matched_futures = [e for e in matched_futures if _compute_best_roi(e) >= min_roi]
         unmatched = []  # Hide unmatched when filtering by ROI
 
-    return matched + unmatched
+    return matched_games + matched_futures + unmatched
 
 
 def _parse_opp_details(opp: dict) -> dict:
@@ -219,11 +235,12 @@ async def dashboard(request: Request):
     events = app_state.get("matched_events", [])
     sport = request.query_params.get("sport", "")
     min_roi_param = request.query_params.get("min_roi", "-5")
+    hide_futures = request.query_params.get("hide_futures", "") == "1"
     try:
         min_roi = float(min_roi_param) if min_roi_param != "all" else None
     except ValueError:
         min_roi = -5.0
-    events = _filter_and_sort_events(events, sport, min_roi=min_roi)
+    events = _filter_and_sort_events(events, sport, min_roi=min_roi, hide_futures=hide_futures)
 
     # Collect available sports for filter buttons
     all_events = app_state.get("matched_events", [])
@@ -292,11 +309,12 @@ async def partial_events(request: Request):
     events = app_state.get("matched_events", [])
     sport = request.query_params.get("sport", "")
     min_roi_param = request.query_params.get("min_roi", "-5")
+    hide_futures = request.query_params.get("hide_futures", "") == "1"
     try:
         min_roi = float(min_roi_param) if min_roi_param != "all" else None
     except ValueError:
         min_roi = -5.0
-    events = _filter_and_sort_events(events, sport, min_roi=min_roi)
+    events = _filter_and_sort_events(events, sport, min_roi=min_roi, hide_futures=hide_futures)
 
     # Build arb_teams set for the green dot indicator
     opportunities = await db.get_active_opportunities(limit=50)
@@ -307,7 +325,8 @@ async def partial_events(request: Request):
 
     return templates.TemplateResponse(
         "partials/events.html",
-        {"request": request, "events": events, "arb_teams": arb_teams},
+        {"request": request, "events": events, "arb_teams": arb_teams,
+         "scan_metrics_by_sport": app_state.get("scan_metrics_by_sport", {})},
     )
 
 
@@ -318,6 +337,66 @@ async def partial_alerts(request: Request):
     return templates.TemplateResponse(
         "partials/alerts.html",
         {"request": request, "opportunities": opportunities},
+    )
+
+
+@router.get("/api/calculate")
+async def api_calculate(request: Request):
+    """Calculate bet sizes for an opportunity."""
+    from src.engine.arbitrage import calculate_bet_sizes
+    opp_id = request.query_params.get("opp_id", "")
+    try:
+        bankroll = float(request.query_params.get("bankroll", "100"))
+    except ValueError:
+        bankroll = 100.0
+
+    if not opp_id:
+        return {"error": "opp_id required"}
+
+    opps = await db.get_active_opportunities(limit=100)
+    opp = None
+    for o in opps:
+        if o.get("id") == opp_id:
+            opp = o
+            break
+    if not opp:
+        return {"error": "opportunity not found"}
+
+    yes_plat = Platform(opp["platform_buy_yes"])
+    no_plat = Platform(opp["platform_buy_no"])
+
+    result = calculate_bet_sizes(
+        yes_price=opp["yes_price"],
+        no_price=opp["no_price"],
+        yes_platform=yes_plat,
+        no_platform=no_plat,
+        bankroll=bankroll,
+    )
+    result["opp_id"] = opp_id
+    result["bankroll"] = bankroll
+    return result
+
+
+@router.get("/api/roi-history/{opp_id}")
+async def api_roi_history(opp_id: str):
+    """Return ROI time series for an opportunity."""
+    history = await db.get_roi_history(opp_id)
+    return history
+
+
+@router.get("/partials/roi-history/{opp_id}", response_class=HTMLResponse)
+async def partial_roi_history(opp_id: str):
+    """Return a formatted ROI sparkline for an opportunity."""
+    history = await db.get_roi_history(opp_id)
+    if not history:
+        return HTMLResponse('<span style="color:var(--text-dim);font-size:0.7rem;">No ROI data yet</span>')
+    # Show last 10 snapshots as text sparkline
+    recent = history[-10:]
+    parts = [f'{h["roi"]:.1f}%' for h in recent]
+    trend = " → ".join(parts)
+    return HTMLResponse(
+        f'<div style="display:block;font-size:0.7rem;color:var(--text-dim);padding:0.3rem 0;">'
+        f'ROI trend: {trend}</div>'
     )
 
 
@@ -332,6 +411,51 @@ async def analytics_page(request: Request):
     return templates.TemplateResponse(
         "analytics.html",
         {"request": request, "data": data, "last_update": datetime.now(UTC).strftime("%H:%M:%S UTC")},
+    )
+
+
+@router.get("/api/simulate")
+async def api_simulate(request: Request):
+    """Run P&L simulation."""
+    try:
+        bankroll = float(request.query_params.get("bankroll", "1000"))
+    except ValueError:
+        bankroll = 1000.0
+    try:
+        min_roi = float(request.query_params.get("min_roi", "1"))
+    except ValueError:
+        min_roi = 1.0
+    min_confidence = request.query_params.get("min_confidence", "low")
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except ValueError:
+        days = 30
+    return await db.simulate_pnl(bankroll, min_roi, min_confidence, days)
+
+
+@router.get("/simulator", response_class=HTMLResponse)
+async def simulator_page(request: Request):
+    try:
+        bankroll = float(request.query_params.get("bankroll", "1000"))
+    except ValueError:
+        bankroll = 1000.0
+    try:
+        min_roi = float(request.query_params.get("min_roi", "1"))
+    except ValueError:
+        min_roi = 1.0
+    min_confidence = request.query_params.get("min_confidence", "low")
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except ValueError:
+        days = 30
+    data = await db.simulate_pnl(bankroll, min_roi, min_confidence, days)
+    return templates.TemplateResponse(
+        "simulator.html",
+        {
+            "request": request,
+            "data": data,
+            "last_update": datetime.now(UTC).strftime("%H:%M:%S UTC"),
+        },
     )
 
 

@@ -22,7 +22,25 @@
                 {% if sport %}
                     <span class="badge badge-sport badge-sport-{{ sport }}">{{ sport|upper }}</span>
                 {% endif %}
+                {% set pm_type = pm.market_type if pm else '' %}
+                {% set km_type = km.market_type if km else '' %}
+                {% set is_futures = pm_type == 'futures' or km_type == 'futures' %}
+                {% if is_futures %}
+                    <span class="badge" style="background: var(--blue); color: white; font-size: 0.55rem; padding: 1px 5px;">FUTURES</span>
+                {% endif %}
+                {% set pm_subtype = pm.raw_data.get('market_subtype', 'moneyline') if pm else 'moneyline' %}
+                {% set km_subtype = km.raw_data.get('market_subtype', 'moneyline') if km else 'moneyline' %}
+                {% set subtype = pm_subtype if pm_subtype != 'moneyline' else km_subtype %}
+                {% if subtype == 'spread' %}
+                    <span class="badge" style="background: #7c3aed; color: white; font-size: 0.55rem; padding: 1px 5px;">SPREAD</span>
+                {% elif subtype == 'over_under' %}
+                    <span class="badge" style="background: #0891b2; color: white; font-size: 0.55rem; padding: 1px 5px;">O/U</span>
+                {% endif %}
                 <strong>{{ event.team_a }}</strong>
+                {% set line_val = (pm.line if pm and pm.line is not none else None) or (km.line if km and km.line is not none else None) %}
+                {% if line_val is not none %}
+                    <span style="color: var(--yellow); font-size: 0.7rem;">{{ "%+.1f"|format(line_val) if subtype == 'spread' else "%.1f"|format(line_val) }}</span>
+                {% endif %}
                 {% if event.team_b %} vs <strong>{{ event.team_b }}</strong>{% endif %}
                 {% if event.matched %}
                     <span class="badge badge-arb" style="margin-left: 4px; font-size: 0.6rem;">MATCHED</span>
@@ -134,6 +152,14 @@
     {% if ns.counts %}
         ({% for sport, cnt in ns.counts.items() %}{{ cnt }} {{ sport|upper }}{% if not loop.last %}, {% endif %}{% endfor %})
     {% endif %}
+</div>
+{% endif %}
+{% if scan_metrics_by_sport %}
+<div style="margin-top: 0.6rem; font-size: 0.65rem; color: var(--text-dim); display: flex; gap: 0.8rem; flex-wrap: wrap;">
+    <span style="font-weight: 600;">Scan timing:</span>
+    {% for sport, dur in scan_metrics_by_sport.items()|sort %}
+        <span><span class="badge badge-sport badge-sport-{{ sport }}" style="font-size: 0.55rem; padding: 0px 4px;">{{ sport|upper }}</span> {{ dur }}s</span>
+    {% endfor %}
 </div>
 {% endif %}
 {% else %}
