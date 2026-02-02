@@ -73,10 +73,13 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     poly_url = poly_market.url or ""
     kalshi_url = kalshi_market.url or ""
     market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
+    market_type = poly_market.market_type or kalshi_market.market_type or "game"
 
-    # Skip markets with insufficient liquidity
+    # Skip markets with insufficient liquidity — need volume on BOTH platforms
     poly_vol = poly_market.price.volume if poly_market.price else 0
     kalshi_vol = kalshi_market.price.volume if kalshi_market.price else 0
+    if (poly_vol or 0) == 0 or (kalshi_vol or 0) == 0:
+        return None
     combined_vol = (poly_vol or 0) + (kalshi_vol or 0)
     if combined_vol < 100:
         return None
@@ -153,6 +156,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "exec_cost": round(exec_cost_1, 4),
                     "executable": has_exec_d1,
                     "market_subtype": market_subtype,
+                    "market_type": market_type,
                 },
             )
 
@@ -200,6 +204,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "exec_cost": round(exec_cost_2, 4),
                     "executable": has_exec_d2,
                     "market_subtype": market_subtype,
+                    "market_type": market_type,
                 },
             )
 

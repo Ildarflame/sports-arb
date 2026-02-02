@@ -371,12 +371,12 @@ async def _process_sport_group(
             continue
         if pp.yes_price <= 0.02 or pp.yes_price >= 0.98:
             continue
+        if (pp.volume or 0) == 0 or (kp.volume or 0) == 0:
+            continue
         combined_vol = (pp.volume or 0) + (kp.volume or 0)
         if combined_vol < 100:
             continue
         if pp.yes_price == 0.5 and pp.no_price == 0.5 and not event.team_b:
-            continue
-        if pm.market_type == "futures" or km.market_type == "futures":
             continue
         if event.teams_swapped:
             cost1 = pp.yes_price + (1 - kp.yes_price)

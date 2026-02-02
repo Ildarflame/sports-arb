@@ -162,10 +162,15 @@ def _parse_line_value(text: str) -> float | None:
         except ValueError:
             pass
     # Over/Under: "Over 220.5" or "Under 220.5"
-    m = re.search(r"(?:over|under|o/u|total)\s+(\d+\.?\d*)", text, re.IGNORECASE)
+    # Sign convention: Over=positive, Under=negative
+    m = re.search(r"(over|under|o/u|total)\s+(\d+\.?\d*)", text, re.IGNORECASE)
     if m:
         try:
-            return float(m.group(1))
+            line = float(m.group(2))
+            keyword = m.group(1).lower()
+            if keyword == "under":
+                return -line
+            return line
         except ValueError:
             pass
     return None
@@ -703,30 +708,39 @@ class PolymarketConnector(BaseConnector):
             return None
 
     async def fetch_prices_batch(self, token_ids: list[str]) -> dict[str, MarketPrice]:
-        """Fetch prices for multiple tokens."""
+        """Fetch prices for multiple tokens via POST /prices."""
         result: dict[str, MarketPrice] = {}
         if not token_ids:
             return result
-        try:
-            resp = await self._clob.get(
-                "/prices",
-                params={"token_ids": ",".join(token_ids)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # data is typically a dict {token_id: price}
-            for tid, price_str in data.items():
-                try:
-                    p = float(price_str)
-                    result[tid] = MarketPrice(
-                        yes_price=p,
-                        no_price=round(1 - p, 4),
-                        last_updated=datetime.now(UTC),
-                    )
-                except (ValueError, TypeError):
-                    continue
-        except Exception:
-            logger.exception("Error batch fetching Polymarket prices")
+        # API limit: 500 tokens per request
+        CHUNK_SIZE = 500
+        for i in range(0, len(token_ids), CHUNK_SIZE):
+            chunk = token_ids[i:i + CHUNK_SIZE]
+            try:
+                body = [{"token_id": tid, "side": "BUY"} for tid in chunk]
+                resp = await self._clob.post("/prices", json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                # Response: {token_id: {"BUY": price_str, "SELL": price_str}, ...}
+                for tid in chunk:
+                    if tid not in data:
+                        continue
+                    try:
+                        entry = data[tid]
+                        if isinstance(entry, dict):
+                            p = float(entry.get("BUY", 0))
+                        else:
+                            p = float(entry)
+                        if p > 0:
+                            result[tid] = MarketPrice(
+                                yes_price=p,
+                                no_price=round(1 - p, 4),
+                                last_updated=datetime.now(UTC),
+                            )
+                    except (ValueError, TypeError):
+                        continue
+            except Exception:
+                logger.exception(f"Error batch fetching Polymarket prices (chunk {i})")
         return result
 
     async def fetch_book(self, token_id: str) -> MarketPrice | None:
@@ -738,8 +752,8 @@ class PolymarketConnector(BaseConnector):
             bids = data.get("bids", [])
             asks = data.get("asks", [])
 
-            best_bid: float | None = float(bids[0]["price"]) if bids else None
-            best_ask: float | None = float(asks[0]["price"]) if asks else None
+            best_bid: float | None = float(bids[-1]["price"]) if bids else None
+            best_ask: float | None = float(asks[-1]["price"]) if asks else None
 
             # Filter out junk orders: bid/ask spread > 90% means empty book
             if best_bid is not None and best_ask is not None:
@@ -855,7 +869,7 @@ class PolymarketConnector(BaseConnector):
         return new_tags
 
     async def subscribe_prices(self, market_ids: list[str]) -> AsyncIterator[tuple[str, MarketPrice]]:
-        """Subscribe to WebSocket price changes."""
+        """Subscribe to WebSocket price changes using Polymarket CLOB WS protocol."""
         if not market_ids:
             return
 
@@ -866,34 +880,64 @@ class PolymarketConnector(BaseConnector):
             try:
                 async with websockets.connect(ws_url) as ws:
                     self._ws = ws
-                    # Subscribe to price channels for each market
-                    for mid in market_ids:
-                        sub_msg = json.dumps({
-                            "type": "subscribe",
-                            "channel": "price_change",
-                            "market": mid,
-                        })
-                        await ws.send(sub_msg)
+                    # Single subscription message with all asset IDs
+                    sub_msg = json.dumps({
+                        "type": "MARKET",
+                        "assets_ids": market_ids,
+                        "custom_feature_enabled": True,
+                    })
+                    await ws.send(sub_msg)
 
-                    logger.info(f"Polymarket WS: subscribed to {len(market_ids)} markets")
+                    logger.info(f"Polymarket WS: subscribing to {len(market_ids)} tokens")
 
                     async for raw_msg in ws:
                         if not self._running:
                             break
                         try:
                             msg = json.loads(raw_msg)
-                            if msg.get("type") == "price_change":
-                                token_id = msg.get("market", msg.get("asset_id", ""))
-                                price = float(msg.get("price", 0))
-                                if token_id and price:
-                                    yield (
-                                        token_id,
-                                        MarketPrice(
+                            event_type = msg.get("event_type", msg.get("type", ""))
+
+                            if event_type == "price_change":
+                                # price_change events have nested price_changes array
+                                for change in msg.get("price_changes", []):
+                                    token_id = change.get("asset_id", "")
+                                    price = float(change.get("price", 0))
+                                    if token_id and price > 0:
+                                        mp = MarketPrice(
                                             yes_price=price,
                                             no_price=round(1 - price, 4),
                                             last_updated=datetime.now(UTC),
-                                        ),
-                                    )
+                                        )
+                                        # Include bid/ask if available
+                                        bb = change.get("best_bid")
+                                        ba = change.get("best_ask")
+                                        if bb:
+                                            mp.yes_bid = float(bb)
+                                        if ba:
+                                            mp.yes_ask = float(ba)
+                                        yield (token_id, mp)
+
+                            elif event_type == "best_bid_ask":
+                                # best_bid_ask events (enabled by custom_feature_enabled)
+                                token_id = msg.get("asset_id", "")
+                                bb = msg.get("best_bid")
+                                ba = msg.get("best_ask")
+                                if token_id and (bb or ba):
+                                    bid = float(bb) if bb else None
+                                    ask = float(ba) if ba else None
+                                    mid = ((bid or 0) + (ask or 0)) / 2 if bid and ask else (bid or ask or 0)
+                                    if mid > 0:
+                                        yield (
+                                            token_id,
+                                            MarketPrice(
+                                                yes_price=round(mid, 4),
+                                                no_price=round(1 - mid, 4),
+                                                yes_bid=bid,
+                                                yes_ask=ask,
+                                                last_updated=datetime.now(UTC),
+                                            ),
+                                        )
+
                         except (json.JSONDecodeError, ValueError):
                             continue
 

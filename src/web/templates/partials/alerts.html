@@ -56,6 +56,9 @@
             {% set poly_exec_str = 'bid/ask' if d.get('has_poly_exec') else 'mid' %}
             {% set kalshi_exec_str = 'bid/ask' if d.get('has_kalshi_exec') else 'mid' %}
             {% set conf_tooltip = conf|upper ~ ': Poly $' ~ "{:,.0f}".format(pvol or 0) ~ ' vol, ' ~ poly_exec_str ~ ' | Kalshi $' ~ "{:,.0f}".format(kvol or 0) ~ ' vol, ' ~ kalshi_exec_str %}
+            {% if d.get('market_type') == 'futures' %}
+                <span class="micro-badge" style="background: var(--blue)">FUTURES</span>
+            {% endif %}
             {% if conf == 'high' %}
                 <span class="micro-badge mb-conf-high" title="{{ conf_tooltip }}">HIGH</span>
             {% elif conf == 'medium' %}

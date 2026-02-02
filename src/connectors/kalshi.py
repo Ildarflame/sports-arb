@@ -62,15 +62,25 @@ def _detect_market_subtype(ticker: str, title: str) -> tuple[str, float | None]:
     sp_match = re.search(r"-SP[+-]?(\d+\.?\d*)", upper)
     if sp_match:
         line = float(sp_match.group(1))
-        # Determine sign from title or ticker context
-        if "-" in ticker[ticker.upper().find("-SP"):]:
+        # Determine sign: look at segment after "-SP" prefix
+        sp_idx = upper.find("-SP") + 3  # skip past "-SP"
+        sp_segment = upper[sp_idx:]
+        if sp_segment.startswith("-"):
             return "spread", -line
         return "spread", line
 
     # Check ticker for O/U indicator
     ou_match = re.search(r"-(?:OU|TOTAL)(\d+\.?\d*)", upper)
     if ou_match:
-        return "over_under", float(ou_match.group(1))
+        line = float(ou_match.group(1))
+        # Sign convention: Over=positive, Under=negative
+        # Check ticker for -OV or -UN prefix before the number
+        if "-UN" in upper:
+            return "over_under", -line
+        # Also check title for "under"
+        if "under" in title_lower and "over" not in title_lower:
+            return "over_under", -line
+        return "over_under", line
 
     # Fallback: check title
     if "spread" in title_lower or re.search(r"[+-]\d+\.5", title):
@@ -81,7 +91,11 @@ def _detect_market_subtype(ticker: str, title: str) -> tuple[str, float | None]:
     if any(kw in title_lower for kw in ("over ", "under ", "total ", "o/u ")):
         m = re.search(r"(?:over|under|total|o/u)\s+(\d+\.?\d*)", title_lower)
         if m:
-            return "over_under", float(m.group(1))
+            line = float(m.group(1))
+            # Sign convention: under=negative
+            if "under" in title_lower and "over" not in title_lower:
+                return "over_under", -line
+            return "over_under", line
 
     return "moneyline", None
 
