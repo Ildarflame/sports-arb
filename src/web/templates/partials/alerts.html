@@ -3,6 +3,8 @@
 {% set d = opp.details if opp.details is mapping else {} %}
 {% set is_suspicious = d.get('suspicious', false) %}
 {% set is_exec = d.get('executable', false) %}
+{% set sport = opp.sport|default('') %}
+{% set is_draw_sport = sport in ('soccer', 'rugby', 'cricket') %}
 {# Determine direction and prices #}
 {% set buy_yes_plat = opp.platform_buy_yes|default('')|upper %}
 {% set buy_no_plat = opp.platform_buy_no|default('')|upper %}
@@ -114,16 +116,29 @@
                 <div class="exec-step">
                     <span class="step-num">2</span>
                     {% if no_plat_name == 'Polymarket' %}
-                        <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_b }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
-                        ставишь на победу {{ opp.team_b }} по
+                        {% if is_draw_sport %}
+                            <span class="step-action">Polymarket:</span> На том же маркете <strong>{{ opp.team_a }}</strong> нажми <strong>&laquo;No&raquo;</strong> &mdash;
+                            ставишь на то что {{ opp.team_a }} <em>не победит</em> по
+                        {% else %}
+                            <span class="step-action">Polymarket:</span> Выбери <strong>{{ opp.team_b }}</strong> (кнопка &laquo;Buy&raquo;) &mdash;
+                            ставишь на победу {{ opp.team_b }} по
+                        {% endif %}
                         <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
                         {% if is_exec %}(best ask){% else %}(оценка){% endif %}
-                        <div class="step-hint">Это то же самое что NO на {{ opp.team_a }}. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                        {% if is_draw_sport %}
+                            <div class="step-hint">NO = {{ opp.team_a }} не победит (ничья или поражение). Если {{ opp.team_a }} не выиграет &rarr; получишь $1.</div>
+                        {% else %}
+                            <div class="step-hint">Это то же самое что NO на {{ opp.team_a }}. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                        {% endif %}
                     {% else %}
                         <span class="step-action">Kalshi:</span> Найди маркет <strong>&laquo;{{ opp.team_a }}&raquo;</strong> и нажми <strong>No</strong> по
                         <span class="step-price">{{ "%.1f"|format(no_buy_price * 100) }}c</span>
                         {% if is_exec %}(best ask){% else %}(оценка){% endif %}
-                        <div class="step-hint">Тот же маркет что в шаге 1, но кнопка No. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                        {% if is_draw_sport %}
+                            <div class="step-hint">No на маркете {{ opp.team_a }}. Если {{ opp.team_a }} не выиграет (ничья или поражение) &rarr; получишь $1.</div>
+                        {% else %}
+                            <div class="step-hint">Тот же маркет что в шаге 1, но кнопка No. Если {{ opp.team_a }} проиграет &rarr; получишь $1.</div>
+                        {% endif %}
                     {% endif %}
                     {% if no_url %}
                     <div class="step-link"><a href="{{ no_url }}" target="_blank" rel="noopener">Открыть {{ no_plat_name }} &rarr;</a></div>
@@ -131,7 +146,11 @@
                 </div>
                 <div class="exec-summary">
                     <div class="exec-summary-why">
-                        Любой исход &rarr; одна из ставок платит $1. Вместе стоят {{ "%.1f"|format(total * 100) }}c &lt; 100c.
+                        {% if is_draw_sport %}
+                            YES = {{ opp.team_a }} победит. NO = {{ opp.team_a }} не победит (ничья/поражение). Вместе покрывают все исходы.
+                        {% else %}
+                            Любой исход &rarr; одна из ставок платит $1. Вместе стоят {{ "%.1f"|format(total * 100) }}c &lt; 100c.
+                        {% endif %}
                     </div>
                     Итого: {{ "%.1f"|format(total * 100) }}c &rarr; Выплата: 100c &rarr; Профит: +{{ "%.1f"|format((1.0 - total) * 100) }}c (+{{ "%.2f"|format(roi) }}%)
                 </div>
