@@ -67,7 +67,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
 
     # DEBUG: trace bid/ask propagation
     if poly_market.price.yes_bid is not None:
-        logger.debug(
+        logger.info(
             f"ARB_DEBUG {event.title[:40]}: raw poly bid={poly_market.price.yes_bid} ask={poly_market.price.yes_ask} → pp bid={pp.yes_bid} ask={pp.yes_ask}"
         )
 
