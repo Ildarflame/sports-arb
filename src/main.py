@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import time
+from datetime import date, timedelta
 
 import uvicorn
 
@@ -38,6 +39,30 @@ async def _fetch_with_semaphore(coro):
     """Run a coroutine with semaphore-limited concurrency."""
     async with _price_semaphore:
         return await coro
+
+
+def _is_valid_price(price: MarketPrice | None) -> bool:
+    """Check if a price looks real (not a 50/50 default placeholder)."""
+    if not price:
+        return False
+    # Exactly 0.5/0.5 with no bid/ask and no volume = placeholder
+    if (price.yes_price == 0.5
+            and price.no_price == 0.5
+            and price.yes_bid is None
+            and price.yes_ask is None
+            and (price.volume or 0) == 0):
+        return False
+    return True
+
+
+def _is_stale_event(event: SportEvent) -> bool:
+    """Check if a game event has a date in the past (>1 day old)."""
+    pm = event.markets.get(Platform.POLYMARKET)
+    km = event.markets.get(Platform.KALSHI)
+    game_date = (pm.game_date if pm else None) or (km.game_date if km else None)
+    if game_date and game_date < date.today() - timedelta(days=1):
+        return True
+    return False
 
 
 async def fetch_and_update_prices(
@@ -341,10 +366,21 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 # Pass 1.5: Screen candidates by midpoint cost (with 2% buffer for bid/ask spread)
                 arb_candidates: list[SportEvent] = []
                 for event in matched:
+                    # Skip stale events (game already played)
+                    if _is_stale_event(event):
+                        continue
                     pm = event.markets.get(Platform.POLYMARKET)
                     km = event.markets.get(Platform.KALSHI)
                     if pm and km and pm.price and km.price:
                         pp, kp = pm.price, km.price
+                        # Skip placeholder 50/50 prices (no real data)
+                        if not _is_valid_price(pp) or not _is_valid_price(kp):
+                            continue
+                        # Skip extreme prices (<=2c or >=98c) — illiquid long-shot futures
+                        if kp.yes_price <= 0.02 or kp.yes_price >= 0.98:
+                            continue
+                        if pp.yes_price <= 0.02 or pp.yes_price >= 0.98:
+                            continue
                         # Skip dead markets where both platforms have zero volume
                         if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
                             continue

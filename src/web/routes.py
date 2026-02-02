@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request
@@ -56,10 +56,47 @@ def _compute_best_roi(event) -> float:
     return max(roi1, roi2)
 
 
+def _is_placeholder_price(price) -> bool:
+    """Check if price is a 50/50 placeholder (no real data)."""
+    if not price:
+        return True
+    return (price.yes_price == 0.5
+            and price.no_price == 0.5
+            and price.yes_bid is None
+            and price.yes_ask is None
+            and (price.volume or 0) == 0)
+
+
+def _is_stale_event(event) -> bool:
+    """Check if a game event's date is in the past (>1 day old)."""
+    pm = event.markets.get(Platform.POLYMARKET)
+    km = event.markets.get(Platform.KALSHI)
+    game_date = (pm.game_date if pm else None) or (km.game_date if km else None)
+    if game_date and game_date < date.today() - timedelta(days=1):
+        return True
+    return False
+
+
 def _filter_and_sort_events(events: list, sport: str = "", min_roi: float | None = None) -> list:
     """Filter events by sport/min_roi and sort: matched by ROI desc, then Kalshi-only."""
     if sport:
         events = [e for e in events if _get_event_sport(e) == sport]
+
+    # Remove stale events and placeholder-price junk
+    cleaned = []
+    for e in events:
+        if _is_stale_event(e):
+            continue
+        pm = e.markets.get(Platform.POLYMARKET)
+        km = e.markets.get(Platform.KALSHI)
+        # Skip events where Poly price is a 50/50 placeholder (no volume, no book)
+        if pm and _is_placeholder_price(pm.price):
+            continue
+        # Skip extreme Kalshi prices (<=2c or >=98c) — illiquid long-shot futures
+        if km and km.price and (km.price.yes_price <= 0.02 or km.price.yes_price >= 0.98):
+            continue
+        cleaned.append(e)
+    events = cleaned
 
     matched = [e for e in events if e.matched]
     unmatched = [e for e in events if not e.matched]
