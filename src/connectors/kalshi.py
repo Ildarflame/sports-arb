@@ -581,14 +581,67 @@ class KalshiConnector(BaseConnector):
 
             game_series_count = len(markets) - game_count - futures_from_hardcoded - series_futures_count
 
+            # Deduplicate per-team markets: for each game event with 2 complementary
+            # team markets (e.g. "Will TYLOO win?" + "Will DRG win?"), keep only one.
+            # Both are just complements (YES_A = NO_B), so one market suffices.
+            pre_dedup = len(markets)
+            markets = self._dedup_per_team_markets(markets)
+            dedup_removed = pre_dedup - len(markets)
+
             logger.info(
                 f"Kalshi: {len(markets)} total sports markets "
                 f"({game_count} games + {futures_from_hardcoded} event futures "
-                f"+ {series_futures_count} series futures + {game_series_count} game series)"
+                f"+ {series_futures_count} series futures + {game_series_count} game series"
+                f"{f' - {dedup_removed} deduped' if dedup_removed else ''})"
             )
         except Exception:
             logger.exception("Error fetching Kalshi sports markets")
         return markets
+
+    @staticmethod
+    def _dedup_per_team_markets(markets: list[Market]) -> list[Market]:
+        """Deduplicate per-team game markets from the same Kalshi event.
+
+        Kalshi creates separate YES/NO markets per team for each game event:
+          - KXVALORANTGAME-26FEB03DRGTYLOO-DRG  ("Will DRG win?")
+          - KXVALORANTGAME-26FEB03DRGTYLOO-TYLOO ("Will TYLOO win?")
+
+        These are complements (YES on one = NO on the other). Keeping both
+        causes the matcher to potentially pick the wrong team's market,
+        leading to both arb legs betting on the same outcome.
+
+        For each event with exactly 2 game markets, keep only the first
+        market (by ticker order) and ensure team_b is populated.
+        """
+        from collections import defaultdict
+
+        # Group game markets by event_id
+        event_groups: dict[str, list[Market]] = defaultdict(list)
+        non_game: list[Market] = []
+        for m in markets:
+            if m.market_type == "game" and m.event_id:
+                event_groups[m.event_id].append(m)
+            else:
+                non_game.append(m)
+
+        result = list(non_game)
+        for event_id, group in event_groups.items():
+            if len(group) == 2:
+                # Two complementary per-team markets — keep the first by ticker
+                group.sort(key=lambda x: x.market_id)
+                keep = group[0]
+                drop = group[1]
+                # Ensure team_b is populated from the other market's team_a
+                if not keep.team_b and drop.team_a:
+                    keep.team_b = drop.team_a
+                if not keep.team_b:
+                    keep.team_b = drop.team_a
+                result.append(keep)
+            else:
+                # 1 market (no pair) or 3+ markets (e.g. with tie) — keep all
+                result.extend(group)
+
+        return result
 
     def _parse_market(self, m: dict, market_type: str = "futures") -> Market | None:
         """Parse a raw Kalshi market dict into a Market object."""
@@ -754,11 +807,11 @@ class KalshiConnector(BaseConnector):
         """Ensure team_a is the YES team based on ticker suffix.
 
         Kalshi market tickers encode the YES team as a suffix:
-          event_ticker: KXEPLGAME-26FEB01AVLBRE
           market ticker: KXEPLGAME-26FEB01AVLBRE-BRE  (YES=Brentford)
-        The event ticker's team portion (AVLBRE) concatenates both team codes
-        in title order. If the suffix matches the second code, team_b is YES
-        and we swap team_a/team_b so that team_a always = YES team.
+
+        We match the suffix against team names directly to determine which
+        team is YES, rather than relying on event ticker position (which
+        breaks when team_a was set by _extract_team_from_question).
         """
         if not team_a or not team_b or not ticker or not event_ticker:
             return team_a, team_b
@@ -770,16 +823,16 @@ class KalshiConnector(BaseConnector):
         if suffix in ("TIE", "DRAW"):
             return team_a, team_b
 
-        # Extract team codes from event ticker (everything after date digits)
-        m = re.search(r"-\d{2}[A-Z]{3}\d{2}(.+)$", event_ticker.upper())
-        if not m:
-            return team_a, team_b
-        teams_concat = m.group(1)
+        # Check which team name contains the suffix as a substring
+        a_upper = team_a.upper().replace(" ", "")
+        b_upper = team_b.upper().replace(" ", "")
+        a_matches = suffix in a_upper or a_upper.startswith(suffix)
+        b_matches = suffix in b_upper or b_upper.startswith(suffix)
 
-        if teams_concat.endswith(suffix) and not teams_concat.startswith(suffix):
-            # Suffix is the second team code → maps to team_b in title → swap
+        if b_matches and not a_matches:
+            # team_b is the YES team → swap so team_a = YES team
             return team_b, team_a
-        # Suffix is the first team code or ambiguous → keep as-is
+        # team_a already matches or ambiguous → keep as-is
         return team_a, team_b
 
     @staticmethod

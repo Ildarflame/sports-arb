@@ -14,7 +14,7 @@ from src.connectors.polymarket import PolymarketConnector
 from src.db import db
 from src.engine.arbitrage import calculate_arbitrage
 from src.engine.matcher import match_events
-from src.models import MarketPrice, Platform, SportEvent
+from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -390,30 +390,51 @@ async def _process_sport_group(
     # Fetch order books for candidates
     if arb_candidates:
         await fetch_books_for_candidates(poly, kalshi, arb_candidates)
-        # DEBUG: verify bid/ask survived
-        for ev in arb_candidates[:3]:
-            _pm = ev.markets.get(Platform.POLYMARKET)
-            if _pm:
-                logger.info(
-                    f"POST_BOOK {ev.title[:30]}: id(pm.price)={id(_pm.price)} "
-                    f"bid={_pm.price.yes_bid if _pm.price else '?'} "
-                    f"ask={_pm.price.yes_ask if _pm.price else '?'}"
-                )
 
     # Calculate arbitrage (only for non-stale events)
+    # Second-chance pass: if arb found but no bid/ask, fetch books and recalculate
+    needs_book: list[tuple[SportEvent, ArbitrageOpportunity]] = []
     for event in events:
         if _is_stale_event(event):
             continue
-        # DEBUG: check price right before arb calc
-        _dbg_pm = event.markets.get(Platform.POLYMARKET)
-        if _dbg_pm and _dbg_pm.price and _dbg_pm.price.yes_bid is not None:
-            logger.info(
-                f"PRE_ARB {event.title[:30]}: id(price)={id(_dbg_pm.price)} "
-                f"bid={_dbg_pm.price.yes_bid}"
-            )
         opp = calculate_arbitrage(event)
         if opp:
-            results.append((event, opp))
+            pm = event.markets.get(Platform.POLYMARKET)
+            has_bid_ask = pm and pm.price and pm.price.yes_bid is not None
+            if has_bid_ask:
+                results.append((event, opp))
+            else:
+                needs_book.append((event, opp))
+
+    if needs_book:
+        book_events = [ev for ev, _ in needs_book]
+        logger.info(f"Second-chance book fetch for {len(book_events)} arb events without bid/ask")
+        await fetch_books_for_candidates(poly, kalshi, book_events)
+        for event, midpoint_opp in needs_book:
+            opp = calculate_arbitrage(event)
+            if opp:
+                # Recalc produced arb with real bid/ask — use it
+                results.append((event, opp))
+            else:
+                # Arb disappeared at real prices — keep midpoint arb but
+                # enrich with bid/ask data so dashboard shows market info
+                pm = event.markets.get(Platform.POLYMARKET)
+                km = event.markets.get(Platform.KALSHI)
+                if pm and pm.price:
+                    midpoint_opp.details["poly_yes_bid"] = pm.price.yes_bid
+                    midpoint_opp.details["poly_yes_ask"] = pm.price.yes_ask
+                    midpoint_opp.details["has_poly_exec"] = bool(
+                        pm.price.yes_bid and pm.price.yes_ask
+                    )
+                if km and km.price:
+                    midpoint_opp.details["kalshi_yes_bid"] = km.price.yes_bid
+                    midpoint_opp.details["kalshi_yes_ask"] = km.price.yes_ask
+                    midpoint_opp.details["has_kalshi_exec"] = bool(
+                        km.price.yes_bid and km.price.yes_ask
+                    )
+                midpoint_opp.details["midpoint_only"] = True
+                midpoint_opp.details["confidence"] = "low"
+                results.append((event, midpoint_opp))
 
     duration = time.monotonic() - start
     return results, duration

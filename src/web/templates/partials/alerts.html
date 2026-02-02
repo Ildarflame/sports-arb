@@ -8,13 +8,12 @@
 {# Determine direction and prices #}
 {% set buy_yes_plat = opp.platform_buy_yes|default('')|upper %}
 {% set buy_no_plat = opp.platform_buy_no|default('')|upper %}
-{# Executable buy prices (ask) #}
+{# Executable buy prices (ask) — for midpoint_only arbs, use the midpoint prices #}
+{% set is_midpoint_only = d.get('midpoint_only', false) %}
 {% if buy_yes_plat == 'POLYMARKET' %}
-    {% set yes_buy_price = d.get('poly_yes_ask') or opp.yes_price %}
+    {% set yes_buy_price = opp.yes_price if is_midpoint_only else (d.get('poly_yes_ask') or opp.yes_price) %}
     {% set yes_mid = d.get('poly_yes') or opp.yes_price %}
-    {% set no_buy_price = d.get('kalshi_yes_ask') %}
-    {# For NO on Kalshi: we buy NO = 1 - YES_bid, or just use opp.no_price #}
-    {% set no_buy_price = opp.no_price if not d.get('kalshi_yes_bid') else (1.0 - d.get('kalshi_yes_bid')) %}
+    {% set no_buy_price = opp.no_price if (is_midpoint_only or not d.get('kalshi_yes_bid')) else (1.0 - d.get('kalshi_yes_bid')) %}
     {% set no_mid = d.get('kalshi_no') or opp.no_price %}
     {% set yes_url = d.get('poly_url', '') %}
     {% set no_url = d.get('kalshi_url', '') %}
@@ -23,9 +22,9 @@
     {% set yes_plat_name = 'Polymarket' %}
     {% set no_plat_name = 'Kalshi' %}
 {% else %}
-    {% set yes_buy_price = d.get('kalshi_yes_ask') or opp.yes_price %}
+    {% set yes_buy_price = opp.yes_price if is_midpoint_only else (d.get('kalshi_yes_ask') or opp.yes_price) %}
     {% set yes_mid = d.get('kalshi_yes') or opp.yes_price %}
-    {% set no_buy_price = opp.no_price if not d.get('poly_yes_bid') else (1.0 - d.get('poly_yes_bid')) %}
+    {% set no_buy_price = opp.no_price if (is_midpoint_only or not d.get('poly_yes_bid')) else (1.0 - d.get('poly_yes_bid')) %}
     {% set no_mid = d.get('poly_no') or opp.no_price %}
     {% set yes_url = d.get('kalshi_url', '') %}
     {% set no_url = d.get('poly_url', '') %}
