@@ -296,7 +296,7 @@ _SOCCER_STRIP_END = re.compile(
 _SOCCER_STRIP_PREFIX = re.compile(
     r"^(?:aj|us|rc|ss|as|ac|fc|fk|sk|bk|if|ff|sc|cf|ssc|ssd|cd|ca|cs|ud|bv"
     r"|tsg|tsv|sv|vfb|vfl|rb|rcd|spvgg|rayo"
-    r"|real|sporting|racing|dynamo|dinamo|\d+\.)\s+",
+    r"|sporting|racing|dynamo|dinamo|\d+\.)\s+",
     re.IGNORECASE,
 )
 # Year suffix: "Bologna FC 1909" → "Bologna FC" (also matches mid-name like "TSG 1899 Hoffenheim")

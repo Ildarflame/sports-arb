@@ -49,7 +49,80 @@ class Database:
             await self._db.execute(_MIGRATION_ADD_SPORT)
         except Exception:
             pass  # Column already exists
+        # One-time cleanup: purge legacy garbage data (ROI > 50% = stale/illiquid artifacts)
+        cur = await self._db.execute(
+            "DELETE FROM opportunities WHERE roi_after_fees > 50 AND still_active = 0"
+        )
+        if cur.rowcount:
+            import logging
+            logging.getLogger(__name__).info(
+                f"DB cleanup: purged {cur.rowcount} legacy garbage rows (ROI > 50%%)"
+            )
+        # Backfill sport column for rows that have sport=''
+        await self._backfill_sport()
         await self._db.commit()
+
+    async def _backfill_sport(self) -> None:
+        """Backfill empty sport column from event_title patterns."""
+        import logging
+        _log = logging.getLogger(__name__)
+        cursor = await self._db.execute(
+            "SELECT id, event_title, team_a, team_b FROM opportunities WHERE sport = '' OR sport IS NULL"
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return
+
+        # Simple sport detection from team/title patterns
+        _sport_hints = [
+            (["nba", "lakers", "celtics", "warriors", "nets", "knicks", "bucks", "76ers",
+              "cavaliers", "thunder", "nuggets", "timberwolves", "pelicans", "rockets",
+              "spurs", "mavericks", "clippers", "suns", "grizzlies", "hawks", "heat",
+              "magic", "pacers", "pistons", "raptors", "hornets", "wizards", "jazz", "kings",
+              "blazers", "trail blazers"], "nba"),
+            (["nhl", "bruins", "penguins", "maple leafs", "canadiens", "rangers", "blackhawks",
+              "red wings", "flyers", "capitals", "oilers", "avalanche", "lightning", "panthers",
+              "hurricanes", "flames", "canucks", "senators", "blue jackets", "predators",
+              "kraken", "wild", "islanders", "sabres", "sharks", "ducks", "coyotes",
+              "jets", "devils", "stars"], "nhl"),
+            (["premier league", "epl", "la liga", "bundesliga", "serie a", "ligue 1",
+              "champions league", "mls", "fc ", " fc", "united", "city", "real madrid",
+              "barcelona", "liverpool", "arsenal", "chelsea", "tottenham", "juventus",
+              "bayern", "dortmund", "psg", "inter milan", "ac milan", "napoli",
+              "atletico", "sevilla"], "soccer"),
+            (["ncaa", "wildcats", "bulldogs", "tigers", "eagles", "bears", "aggies",
+              "huskies", "mustangs", "cardinals", "gators", "seminoles", "cyclones",
+              "mountaineers", "longhorns", "sooners", "wolverines", "buckeyes",
+              "crimson tide", "jayhawks", "duke", "unc", "gonzaga", "kentucky",
+              "villanova", "kansas", "purdue", "iowa", "indiana", "michigan",
+              "ohio state", "michigan st", "michigan state"], "ncaa_mb"),
+            (["atp", "wta", "open", "stefanini", "djokovic", "nadal", "federer",
+              "sinner", "alcaraz", "swiatek", "sabalenka", "gauff"], "tennis"),
+            (["ufc", "mma"], "mma"),
+        ]
+
+        updated = 0
+        for row in rows:
+            title_lower = (row["event_title"] or "").lower()
+            team_lower = ((row["team_a"] or "") + " " + (row["team_b"] or "")).lower()
+            search_text = title_lower + " " + team_lower
+            sport = ""
+            for keywords, sport_name in _sport_hints:
+                for kw in keywords:
+                    if kw in search_text:
+                        sport = sport_name
+                        break
+                if sport:
+                    break
+            if sport:
+                await self._db.execute(
+                    "UPDATE opportunities SET sport = ? WHERE id = ?",
+                    (sport, row["id"]),
+                )
+                updated += 1
+
+        if updated:
+            _log.info(f"DB backfill: updated sport for {updated}/{len(rows)} opportunities")
 
     async def close(self) -> None:
         if self._db:

@@ -391,7 +391,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 # Pass 1: Fetch midpoint prices for all matched events
                 await fetch_and_update_prices(poly, kalshi, matched)
 
-                # Pass 1.5: Screen candidates by midpoint cost (with 1% buffer for bid/ask spread)
+                # Pass 1.5: Screen candidates by midpoint cost (with 2% buffer for bid/ask spread)
                 arb_candidates: list[SportEvent] = []
                 for event in matched:
                     # Skip stale events (game already played)
@@ -426,7 +426,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         else:
                             cost1 = pp.yes_price + kp.no_price
                             cost2 = kp.yes_price + pp.no_price
-                        if cost1 < 1.01 or cost2 < 1.01:
+                        if cost1 < 1.02 or cost2 < 1.02:
                             arb_candidates.append(event)
 
                 # Pass 2: Fetch order books only for candidates (bid/ask precision)
