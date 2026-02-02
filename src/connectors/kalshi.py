@@ -628,10 +628,31 @@ class KalshiConnector(BaseConnector):
         result = list(non_game)
         for event_id, group in event_groups.items():
             if len(group) == 2:
-                # Two complementary per-team markets — keep the first by ticker
+                # Two complementary per-team markets — keep the one whose ticker
+                # suffix matches the FIRST team code in the event ticker.
+                # E.g., event KXNHLGAME-26FEB02STLNSH → first team = STL
+                # Keep market -STL so that team_a = YES team = first team.
+                # This ensures _align_yes_team works correctly and avoids
+                # mismatches from abbreviated yes_sub_title (e.g. "NSH Predators").
                 group.sort(key=lambda x: x.market_id)
-                keep = group[0]
-                drop = group[1]
+                keep, drop = group[0], group[1]
+
+                # Try to identify first-team market from event ticker
+                # Event ticker pattern: PREFIX-DATEABCXYZ where ABC and XYZ are team codes
+                # Market ticker: PREFIX-DATEABCXYZ-ABC or PREFIX-DATEABCXYZ-XYZ
+                for m in group:
+                    suffix = m.market_id.rsplit("-", 1)[-1].upper()
+                    # Check if this suffix appears FIRST in the event ticker
+                    # by seeing if it comes before the other market's suffix
+                    evt_upper = (m.event_id or "").upper()
+                    if suffix and suffix in evt_upper:
+                        other = [x for x in group if x is not m][0]
+                        other_suffix = other.market_id.rsplit("-", 1)[-1].upper()
+                        idx_this = evt_upper.rfind(suffix)
+                        idx_other = evt_upper.rfind(other_suffix)
+                        if idx_this < idx_other:
+                            keep, drop = m, other
+                            break
                 # Ensure team_b is populated from the other market's team_a
                 if not keep.team_b and drop.team_a:
                     keep.team_b = drop.team_a
@@ -825,6 +846,30 @@ class KalshiConnector(BaseConnector):
                 return team_b, team_a
             if a_match:
                 return team_a, team_b
+
+            # yes_sub_title often has abbreviated prefix: "NSH Predators", "STL Blues"
+            # Strip the 2-4 letter prefix and try matching the remainder
+            ys_parts = ys.split(None, 1)
+            if len(ys_parts) == 2:
+                ys_suffix = ys_parts[1]  # e.g. "predators", "blues"
+                a_match2 = (ys_suffix in a_low) or (a_low in ys_suffix)
+                b_match2 = (ys_suffix in b_low) or (b_low in ys_suffix)
+                if b_match2 and not a_match2:
+                    return team_b, team_a
+                if a_match2:
+                    return team_a, team_b
+
+            # Fuzzy fallback using token similarity
+            try:
+                from rapidfuzz import fuzz as _fuzz
+                sim_a = _fuzz.token_sort_ratio(ys, a_low)
+                sim_b = _fuzz.token_sort_ratio(ys, b_low)
+                if sim_b > sim_a and sim_b > 50:
+                    return team_b, team_a
+                if sim_a > sim_b and sim_a > 50:
+                    return team_a, team_b
+            except ImportError:
+                pass
             # Neither matched — fall through to ticker-based
 
         return KalshiConnector._align_yes_team(
