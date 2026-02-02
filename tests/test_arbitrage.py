@@ -10,7 +10,7 @@ def _make_event(poly_yes: float, poly_no: float, kalshi_yes: float, kalshi_no: f
         title="A vs B",
         team_a="A",
         team_b="B",
-        price=MarketPrice(yes_price=poly_yes, no_price=poly_no),
+        price=MarketPrice(yes_price=poly_yes, no_price=poly_no, volume=5000),
     )
     km = Market(
         platform=Platform.KALSHI,
@@ -19,7 +19,7 @@ def _make_event(poly_yes: float, poly_no: float, kalshi_yes: float, kalshi_no: f
         title="A vs B",
         team_a="A",
         team_b="B",
-        price=MarketPrice(yes_price=kalshi_yes, no_price=kalshi_no),
+        price=MarketPrice(yes_price=kalshi_yes, no_price=kalshi_no, volume=5000),
     )
     return SportEvent(
         id="test1",

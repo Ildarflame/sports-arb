@@ -62,8 +62,9 @@ def _is_stale_event(event: SportEvent) -> bool:
     """Check if a game event's date is in the past."""
     pm = event.markets.get(Platform.POLYMARKET)
     km = event.markets.get(Platform.KALSHI)
-    game_date = (pm.game_date if pm else None) or (km.game_date if km else None)
-    if game_date and game_date < date.today():
+    # Use earliest available game_date from either platform
+    dates = [m.game_date for m in (pm, km) if m and m.game_date]
+    if dates and max(dates) < date.today():
         return True
     return False
 
@@ -101,11 +102,15 @@ async def fetch_and_update_prices(
         except Exception:
             logger.exception("Batch price fetch failed, falling back to individual")
 
-    # Apply batch results to events
+    # Apply batch results to events (preserve volume from Gamma)
     for event, token_id in poly_normal_tokens:
         pm = event.markets.get(Platform.POLYMARKET)
         if pm and token_id in batch_prices:
-            pm.price = batch_prices[token_id]
+            new_price = batch_prices[token_id]
+            # Preserve volume from Gamma API since CLOB /prices doesn't return volume
+            if pm.price and pm.price.volume:
+                new_price.volume = pm.price.volume
+            pm.price = new_price
 
     # Individual fetches for negRisk Poly markets + missing batch results + Kalshi
     individual_tasks: list[tuple[str, SportEvent, str, asyncio.Task]] = []
@@ -298,19 +303,35 @@ def _update_ws_subscriptions(events: list[SportEvent]) -> None:
 
 
 def _apply_ws_cache(events: list[SportEvent]) -> int:
-    """Apply cached WS prices to events before price fetching. Returns count updated."""
+    """Apply cached WS prices to events. WS prices are fresher than Gamma.
+
+    Updates midpoint even if event already has a price (overrides stale Gamma).
+    Preserves bid/ask from any prior book fetch.
+    """
     ws_cache = app_state["ws_price_cache"]
     if not ws_cache:
         return 0
     updated = 0
     for event in events:
         pm = event.markets.get(Platform.POLYMARKET)
-        if not pm or pm.price:
-            continue  # already has a price, skip
+        if not pm:
+            continue
         token_ids = pm.raw_data.get("clob_token_ids", [])
-        if token_ids and token_ids[0] in ws_cache:
-            pm.price = ws_cache[token_ids[0]]
-            updated += 1
+        if not token_ids or token_ids[0] not in ws_cache:
+            continue
+        ws_price = ws_cache[token_ids[0]]
+        if pm.price and (pm.price.yes_bid is not None or pm.price.yes_ask is not None):
+            # Has book data — only update midpoint, keep bid/ask
+            pm.price.yes_price = ws_price.yes_price
+            pm.price.no_price = ws_price.no_price
+            pm.price.last_updated = ws_price.last_updated
+        else:
+            # No book data — use full WS price, preserve volume
+            vol = pm.price.volume if pm.price and pm.price.volume else 0
+            pm.price = ws_price
+            if vol:
+                pm.price.volume = vol
+        updated += 1
     return updated
 
 
@@ -350,7 +371,8 @@ async def _process_sport_group(
             continue
         if pp.yes_price <= 0.02 or pp.yes_price >= 0.98:
             continue
-        if (pp.volume or 0) == 0 and (kp.volume or 0) == 0:
+        combined_vol = (pp.volume or 0) + (kp.volume or 0)
+        if combined_vol < 100:
             continue
         if pp.yes_price == 0.5 and pp.no_price == 0.5 and not event.team_b:
             continue
@@ -369,8 +391,10 @@ async def _process_sport_group(
     if arb_candidates:
         await fetch_books_for_candidates(poly, kalshi, arb_candidates)
 
-    # Calculate arbitrage
+    # Calculate arbitrage (only for non-stale events)
     for event in events:
+        if _is_stale_event(event):
+            continue
         opp = calculate_arbitrage(event)
         if opp:
             results.append((event, opp))
@@ -639,6 +663,11 @@ async def run_app() -> None:
     # Init DB
     await db.connect()
     logger.info(f"Database connected: {settings.db_path}")
+
+    # Purge stale active arbs from previous run — they'll be re-detected if still valid
+    purged = await db.deactivate_all_active()
+    if purged:
+        logger.info(f"Startup: deactivated {purged} stale arbs from previous run")
 
     # Init connectors
     poly = PolymarketConnector()

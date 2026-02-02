@@ -192,6 +192,17 @@ def _parse_game_date_from_iso(dt_str: str | None) -> date | None:
         return None
 
 
+def _parse_game_date_from_slug(slug: str) -> date | None:
+    """Extract date from Polymarket slug like 'cwbb-merc-etnst-2026-02-01'."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", slug)
+    if m:
+        try:
+            return date.fromisoformat(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
 class PolymarketConnector(BaseConnector):
     # Dynamic tags discovered at runtime (not persisted to code)
     _dynamic_tag_slugs: set[str] = set()
@@ -410,6 +421,8 @@ class PolymarketConnector(BaseConnector):
                 game_date = (
                     _parse_game_date_from_question(question)
                     or _parse_game_date_from_iso(m.get("gameStartTime"))
+                    or _parse_game_date_from_iso(m.get("endDate") or event.get("endDate"))
+                    or _parse_game_date_from_slug(market_slug or slug)
                 )
 
             # Event group for futures matching
@@ -448,12 +461,6 @@ class PolymarketConnector(BaseConnector):
                                 team_b_neg = ev_b
                             else:
                                 team_b_neg = ev_a
-
-                # Try harder to get game_date for negRisk game markets
-                if mtype == "game" and not game_date:
-                    game_date = _parse_game_date_from_iso(
-                        m.get("endDate") or event.get("endDate")
-                    )
 
                 price = self._build_price(prices, volume=market_volume)
                 markets.append(Market(

@@ -258,6 +258,16 @@ class Database:
         )
         return cursor.rowcount
 
+    async def deactivate_all_active(self) -> int:
+        """Deactivate ALL currently active opportunities (used on startup)."""
+        now_iso = datetime.utcnow().isoformat()
+        cursor = await self._db.execute(
+            "UPDATE opportunities SET still_active = 0, deactivated_at = ? WHERE still_active = 1",
+            (now_iso,),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     async def get_analytics(self) -> dict:
         """Aggregate analytics from the opportunities table."""
         result: dict = {}

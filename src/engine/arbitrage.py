@@ -74,12 +74,12 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     kalshi_url = kalshi_market.url or ""
     market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
 
-    # Skip markets with volume below threshold
+    # Skip markets with insufficient liquidity
     poly_vol = poly_market.price.volume if poly_market.price else 0
     kalshi_vol = kalshi_market.price.volume if kalshi_market.price else 0
-    if settings.min_volume > 0:
-        if poly_vol == 0 and kalshi_vol == 0:
-            return None
+    combined_vol = (poly_vol or 0) + (kalshi_vol or 0)
+    if combined_vol < 100:
+        return None
 
     # Compute bid-ask spread percentage for liquidity check
     spread_pct = None
