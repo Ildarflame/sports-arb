@@ -390,11 +390,27 @@ async def _process_sport_group(
     # Fetch order books for candidates
     if arb_candidates:
         await fetch_books_for_candidates(poly, kalshi, arb_candidates)
+        # DEBUG: verify bid/ask survived
+        for ev in arb_candidates[:3]:
+            _pm = ev.markets.get(Platform.POLYMARKET)
+            if _pm:
+                logger.info(
+                    f"POST_BOOK {ev.title[:30]}: id(pm.price)={id(_pm.price)} "
+                    f"bid={_pm.price.yes_bid if _pm.price else '?'} "
+                    f"ask={_pm.price.yes_ask if _pm.price else '?'}"
+                )
 
     # Calculate arbitrage (only for non-stale events)
     for event in events:
         if _is_stale_event(event):
             continue
+        # DEBUG: check price right before arb calc
+        _dbg_pm = event.markets.get(Platform.POLYMARKET)
+        if _dbg_pm and _dbg_pm.price and _dbg_pm.price.yes_bid is not None:
+            logger.info(
+                f"PRE_ARB {event.title[:30]}: id(price)={id(_dbg_pm.price)} "
+                f"bid={_dbg_pm.price.yes_bid}"
+            )
         opp = calculate_arbitrage(event)
         if opp:
             results.append((event, opp))
