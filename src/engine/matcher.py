@@ -734,11 +734,16 @@ def match_events(
                     team_similarity(pm.team_b, km.team_a, sport),
                 )
                 if swapped_score > direct_score:
-                    score = swapped_score
-                    # For 3-outcome sports (soccer etc.), allow swapped team
-                    # ORDER for matching but do NOT flag teams_swapped — price
-                    # inversion is invalid when draws are possible.
-                    is_swapped = sport not in _THREE_OUTCOME_SPORTS
+                    if sport in _THREE_OUTCOME_SPORTS:
+                        # For 3-outcome sports (soccer etc.), swapped teams mean
+                        # different YES sides (e.g. Poly YES=Metz vs Kalshi YES=Lille).
+                        # Do NOT match — would create fake arbs since outcomes don't
+                        # cover all cases (draw loses both legs).
+                        score = direct_score
+                        is_swapped = False
+                    else:
+                        score = swapped_score
+                        is_swapped = True
                 else:
                     score = direct_score
                     is_swapped = False

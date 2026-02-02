@@ -1,3 +1,5 @@
+from datetime import date
+
 from src.engine.matcher import match_events, normalize_team_name, team_similarity
 from src.models import Market, Platform
 
@@ -105,3 +107,77 @@ def test_match_events_swapped_order():
     ]
     matched = match_events(poly, kalshi)
     assert len(matched) == 1
+
+
+def test_soccer_swapped_teams_not_matched():
+    """Soccer markets with swapped teams must NOT match — different YES sides
+    create fake arbs (Metz YES + Lille NO doesn't cover all outcomes due to draw)."""
+    game_day = date(2026, 2, 6)
+    poly = [
+        Market(
+            platform=Platform.POLYMARKET,
+            market_id="pm_metz",
+            event_id="e1",
+            title="Will FC Metz win?",
+            team_a="FC Metz",
+            team_b="Lille",
+            sport="soccer",
+            market_type="game",
+            game_date=game_day,
+        )
+    ]
+    kalshi = [
+        Market(
+            platform=Platform.KALSHI,
+            market_id="k_lille",
+            event_id="e2",
+            title="Metz vs Lille Winner?",
+            team_a="Lille",
+            team_b="Metz",
+            sport="soccer",
+            market_type="game",
+            game_date=game_day,
+            raw_data={"yes_team": "Lille"},
+        )
+    ]
+    matched = match_events(poly, kalshi)
+    cross_matched = [e for e in matched if e.matched]
+    assert len(cross_matched) == 0, (
+        "Soccer markets with swapped teams (different YES sides) must not match"
+    )
+
+
+def test_soccer_same_team_matches():
+    """Soccer markets for the same YES team should match correctly."""
+    game_day = date(2026, 2, 6)
+    poly = [
+        Market(
+            platform=Platform.POLYMARKET,
+            market_id="pm_metz",
+            event_id="e1",
+            title="Will FC Metz win?",
+            team_a="FC Metz",
+            team_b="Lille",
+            sport="soccer",
+            market_type="game",
+            game_date=game_day,
+        )
+    ]
+    kalshi = [
+        Market(
+            platform=Platform.KALSHI,
+            market_id="k_metz",
+            event_id="e2",
+            title="Metz vs Lille Winner?",
+            team_a="Metz",
+            team_b="Lille",
+            sport="soccer",
+            market_type="game",
+            game_date=game_day,
+            raw_data={"yes_team": "Metz"},
+        )
+    ]
+    matched = match_events(poly, kalshi)
+    cross_matched = [e for e in matched if e.matched]
+    assert len(cross_matched) == 1, "Soccer markets for same YES team should match"
+    assert cross_matched[0].teams_swapped is False
