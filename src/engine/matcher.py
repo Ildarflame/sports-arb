@@ -670,23 +670,6 @@ def match_events(
     poly_markets = _dedup_markets(poly_markets)
     kalshi_markets = _dedup_markets(kalshi_markets)
 
-    # Debug: count markets with team_a
-    poly_with_team_a = sum(1 for m in poly_markets if m.team_a)
-    kalshi_with_team_a = sum(1 for m in kalshi_markets if m.team_a)
-    logger.info(f"Markets with team_a: Poly={poly_with_team_a}/{len(poly_markets)}, Kalshi={kalshi_with_team_a}/{len(kalshi_markets)}")
-
-    # Debug: show grouping keys
-    poly_keys = set(_grouping_key(m) for m in poly_markets if m.team_a)
-    kalshi_keys = set(_grouping_key(m) for m in kalshi_markets if m.team_a)
-    common_keys = poly_keys & kalshi_keys
-    poly_only = poly_keys - kalshi_keys
-    kalshi_only = kalshi_keys - poly_keys
-    logger.info(f"Grouping keys: Poly={len(poly_keys)}, Kalshi={len(kalshi_keys)}, Common={len(common_keys)}")
-    # Sort with None-safe key
-    logger.info(f"Poly-only keys: {sorted(poly_only, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))[:10]}")
-    logger.info(f"Kalshi-only keys: {sorted(kalshi_only, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))[:10]}")
-    if common_keys:
-        logger.info(f"Common keys: {sorted(common_keys, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))}")
 
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
