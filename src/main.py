@@ -12,9 +12,9 @@ from src.config import settings
 from src.connectors.kalshi import KalshiConnector
 from src.connectors.polymarket import PolymarketConnector
 from src.db import db
-from src.engine.arbitrage import calculate_arbitrage
-from src.engine.matcher import match_events
-from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
+from src.engine.arbitrage import calculate_arbitrage, calculate_3way_arbitrage
+from src.engine.matcher import match_events, find_3way_groups
+from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent, ThreeWayGroup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -532,6 +532,19 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                     *sport_tasks.values(), return_exceptions=True,
                 )
 
+                # Pass 4: 3-Way arbitrage for soccer (separate pass using raw markets)
+                threeway_results: list[ArbitrageOpportunity] = []
+                try:
+                    threeway_groups = find_3way_groups(poly_markets, kalshi_markets)
+                    for group in threeway_groups:
+                        opp = calculate_3way_arbitrage(group)
+                        if opp:
+                            threeway_results.append(opp)
+                    if threeway_results:
+                        logger.info(f"3-Way arbitrage: found {len(threeway_results)} opportunities")
+                except Exception as e:
+                    logger.warning(f"3-Way arbitrage pass failed: {e}")
+
                 # Collect results and per-sport timing
                 current_arb_keys: set[tuple[str, str, str]] = set()
                 seen_game_keys: set[tuple[str, ...]] = set()
@@ -600,6 +613,43 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             "roi": opp.roi_after_fees,
                             "cost": opp.total_cost,
                         })
+
+                # Process 3-way arbitrage results
+                for opp in threeway_results:
+                    if not (opp.roi_after_fees >= settings.min_arb_percent):
+                        continue
+                    if opp.roi_after_fees > settings.max_arb_percent:
+                        logger.warning(
+                            f"SUSPICIOUS 3-WAY ARB (skipped): {opp.event_title} ROI={opp.roi_after_fees}%"
+                        )
+                        continue
+
+                    game_key = tuple(sorted([
+                        opp.team_a.lower().strip(),
+                        opp.team_b.lower().strip(),
+                    ]))
+                    if game_key in seen_game_keys:
+                        continue
+                    seen_game_keys.add(game_key)
+
+                    arb_key = (
+                        opp.team_a,
+                        opp.platform_buy_yes.value,
+                        "3way",  # Special key for 3-way arbs
+                    )
+                    current_arb_keys.add(arb_key)
+
+                    opp_id = await db.save_opportunity(opp, sport="soccer")
+                    logger.info(
+                        f"3-WAY ARBITRAGE SAVED: {opp.event_title} "
+                        f"ROI={opp.roi_after_fees}% id={opp_id} [3-WAY]"
+                    )
+                    broadcast_event("new_arb", {
+                        "event": opp.event_title,
+                        "roi": opp.roi_after_fees,
+                        "cost": opp.total_cost,
+                        "type": "3way",
+                    })
 
                 # Log per-sport timing
                 app_state["scan_metrics_by_sport"] = sport_timings

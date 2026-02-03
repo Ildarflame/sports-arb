@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from src.config import settings
 from src.engine.normalizer import FEES, normalize_price
-from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
+from src.models import ArbitrageOpportunity, Market, MarketPrice, Platform, SportEvent, ThreeWayGroup
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,8 @@ def calculate_arbitrage(
     market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
     # Get line for spread/O-U markets
     market_line = poly_market.line or kalshi_market.line
+    # Get map number for esports
+    map_number = poly_market.map_number or kalshi_market.map_number
 
     # Skip markets with insufficient liquidity — need volume on BOTH platforms
     poly_vol = poly_market.price.volume if poly_market.price else 0
@@ -260,6 +262,7 @@ def calculate_arbitrage(
                     "poly_team_b": poly_market.team_b,
                     "kalshi_team_a": kalshi_market.team_a,
                     "line": market_line,
+                    "map_number": map_number,
                     "kalshi_team_b": kalshi_market.team_b,
                     "poly_url": poly_url,
                     "kalshi_url": kalshi_url,
@@ -333,6 +336,7 @@ def calculate_arbitrage(
                     "kalshi_team_a": kalshi_market.team_a,
                     "kalshi_team_b": kalshi_market.team_b,
                     "line": market_line,
+                    "map_number": map_number,
                     "poly_url": poly_url,
                     "kalshi_url": kalshi_url,
                     "poly_volume": poly_vol,
@@ -434,6 +438,7 @@ def calculate_arbitrage(
                         "kalshi_team_a": kalshi_market.team_a,
                         "kalshi_team_b": kalshi_market.team_b,
                         "line": market_line,
+                    "map_number": map_number,
                         "poly_url": poly_url,
                         "kalshi_url": kalshi_url,
                         "poly_volume": poly_vol,
@@ -498,6 +503,7 @@ def calculate_arbitrage(
                         "kalshi_team_a": kalshi_market.team_a,
                         "kalshi_team_b": kalshi_market.team_b,
                         "line": market_line,
+                    "map_number": map_number,
                         "poly_url": poly_url,
                         "kalshi_url": kalshi_url,
                         "poly_volume": poly_vol,
@@ -651,3 +657,155 @@ def calculate_bet_sizes(
         "guaranteed_profit": profit,
         "roi_on_capital": roi,
     }
+
+
+def calculate_3way_arbitrage(
+    group: "ThreeWayGroup", allow_live: bool | None = None
+) -> ArbitrageOpportunity | None:
+    """Calculate 3-way arbitrage opportunity for soccer matches.
+
+    For each outcome (Win A, Draw, Win B), find the cheapest YES price
+    across both platforms. If total cost < 1.0, we have arbitrage.
+
+    Args:
+        group: ThreeWayGroup with markets from both platforms
+        allow_live: Override for live mode. If None, uses settings.allow_live_arbs
+
+    Returns:
+        ArbitrageOpportunity if arbitrage found, None otherwise
+    """
+    from src.models import ThreeWayGroup
+
+    live_enabled = allow_live if allow_live is not None else settings.allow_live_arbs
+
+    def _get_best_price(poly_m: "Market | None", kalshi_m: "Market | None") -> tuple[float, Platform, "Market | None"]:
+        """Get the best (lowest) YES price for an outcome across platforms."""
+        poly_price = None
+        kalshi_price = None
+
+        if poly_m and poly_m.price:
+            # Check expiration
+            expired, _ = _is_market_expired(poly_m.raw_data, "game", allow_live=live_enabled)
+            if not expired:
+                poly_price = _exec_buy_price(
+                    normalize_price(poly_m.price, Platform.POLYMARKET), "yes"
+                )
+
+        if kalshi_m and kalshi_m.price:
+            expired, _ = _is_market_expired(kalshi_m.raw_data, "game", allow_live=live_enabled)
+            if not expired:
+                kalshi_price = _exec_buy_price(
+                    normalize_price(kalshi_m.price, Platform.KALSHI), "yes"
+                )
+
+        if poly_price is None and kalshi_price is None:
+            return 0, Platform.POLYMARKET, None
+
+        if poly_price is not None and kalshi_price is not None:
+            if poly_price <= kalshi_price:
+                return poly_price, Platform.POLYMARKET, poly_m
+            else:
+                return kalshi_price, Platform.KALSHI, kalshi_m
+        elif poly_price is not None:
+            return poly_price, Platform.POLYMARKET, poly_m
+        else:
+            return kalshi_price, Platform.KALSHI, kalshi_m
+
+    # Get best price for each outcome
+    win_a_price, win_a_platform, win_a_market = _get_best_price(group.poly_win_a, group.kalshi_win_a)
+    draw_price, draw_platform, draw_market = _get_best_price(group.poly_draw, group.kalshi_draw)
+    win_b_price, win_b_platform, win_b_market = _get_best_price(group.poly_win_b, group.kalshi_win_b)
+
+    # Need all 3 outcomes to have valid prices
+    if win_a_price <= 0 or draw_price <= 0 or win_b_price <= 0:
+        return None
+
+    # Calculate total cost (before fees)
+    total_cost = win_a_price + draw_price + win_b_price
+
+    # Check for arbitrage
+    if total_cost >= 1.0:
+        return None
+
+    # Calculate profit and fees
+    gross_profit = 1.0 - total_cost
+
+    fee_win_a = win_a_price * FEES.get(win_a_platform, 0.02)
+    fee_draw = draw_price * FEES.get(draw_platform, 0.02)
+    fee_win_b = win_b_price * FEES.get(win_b_platform, 0.02)
+    total_fees = fee_win_a + fee_draw + fee_win_b
+
+    net_profit = gross_profit - total_fees
+    net_cost = total_cost + total_fees
+
+    if net_profit <= 0:
+        return None
+
+    roi = (net_profit / net_cost) * 100 if net_cost > 0 else 0
+
+    # Build legs for display
+    legs = [
+        {
+            "outcome": f"Win {group.team_a}",
+            "platform": win_a_platform.value,
+            "price": round(win_a_price, 4),
+            "url": win_a_market.url if win_a_market else "",
+        },
+        {
+            "outcome": "Draw",
+            "platform": draw_platform.value,
+            "price": round(draw_price, 4),
+            "url": draw_market.url if draw_market else "",
+        },
+        {
+            "outcome": f"Win {group.team_b}",
+            "platform": win_b_platform.value,
+            "price": round(win_b_price, 4),
+            "url": win_b_market.url if win_b_market else "",
+        },
+    ]
+
+    # Get combined volume
+    total_vol = 0
+    for m in [win_a_market, draw_market, win_b_market]:
+        if m and m.price:
+            total_vol += m.price.volume or 0
+
+    # Create opportunity
+    opp = ArbitrageOpportunity(
+        event_title=f"{group.team_a} vs {group.team_b}",
+        team_a=group.team_a,
+        team_b=group.team_b,
+        platform_buy_yes=win_a_platform,  # Primary platform (for the first leg)
+        platform_buy_no=draw_platform,  # Secondary platform (for display)
+        yes_price=win_a_price,
+        no_price=draw_price + win_b_price,  # Combined cost of other legs
+        total_cost=round(net_cost, 4),
+        profit_pct=round(gross_profit * 100, 2),
+        roi_after_fees=round(roi, 2),
+        found_at=datetime.now(UTC),
+        details={
+            "arb_type": "3way",
+            "legs": legs,
+            "win_a_price": round(win_a_price, 4),
+            "draw_price": round(draw_price, 4),
+            "win_b_price": round(win_b_price, 4),
+            "win_a_platform": win_a_platform.value,
+            "draw_platform": draw_platform.value,
+            "win_b_platform": win_b_platform.value,
+            "direction": f"{group.team_a}@{win_a_platform.value} + Draw@{draw_platform.value} + {group.team_b}@{win_b_platform.value}",
+            "sport": group.sport,
+            "game_date": group.game_date.isoformat() if group.game_date else None,
+            "combined_volume": total_vol,
+            "market_type": "game",
+            "market_subtype": "3way",
+        },
+    )
+
+    logger.info(
+        f"3-WAY ARB FOUND: {group.team_a} vs {group.team_b} | "
+        f"ROI={roi:.2f}% | Cost={net_cost:.4f} | "
+        f"Legs: {win_a_price:.2f}+{draw_price:.2f}+{win_b_price:.2f}={total_cost:.4f}"
+    )
+
+    return opp

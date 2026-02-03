@@ -35,6 +35,7 @@ class Market(BaseModel):
     game_date: date | None = None  # date of the game (for daily matches)
     event_group: str = ""  # tournament/award identifier for futures matching
     line: float | None = None  # spread/total line value (e.g., -3.5, 220.5)
+    map_number: int | None = None  # esports map number (1, 2, 3, etc.)
     url: str = ""
     price: MarketPrice | None = None
     raw_data: dict = Field(default_factory=dict)
@@ -50,6 +51,21 @@ class SportEvent(BaseModel):
     markets: dict[Platform, Market] = Field(default_factory=dict)
     matched: bool = False
     teams_swapped: bool = False  # True = Poly team_a corresponds to Kalshi team_b
+
+
+class ThreeWayGroup(BaseModel):
+    """Group of 3-way markets (Win A, Draw, Win B) for a soccer match."""
+    team_a: str
+    team_b: str
+    game_date: date | None = None
+    sport: str = "soccer"
+    # Markets by outcome and platform
+    poly_win_a: Market | None = None
+    poly_draw: Market | None = None
+    poly_win_b: Market | None = None
+    kalshi_win_a: Market | None = None
+    kalshi_draw: Market | None = None
+    kalshi_win_b: Market | None = None
 
 
 class ArbitrageOpportunity(BaseModel):

@@ -100,6 +100,27 @@ def _detect_market_subtype(ticker: str, title: str) -> tuple[str, float | None]:
     return "moneyline", None
 
 
+def _detect_map_number(ticker: str, title: str) -> int | None:
+    """Detect esports map number from Kalshi ticker or title.
+
+    Patterns:
+      Ticker: KXCS2GAME-26FEB03...-MAP1, KXDOTA2GAME-...-G2
+      Title: "Map 1", "Map 2", "Game 1", "Game 2"
+    """
+    # Check ticker for map indicator (MAP1, MAP2, G1, G2)
+    upper = ticker.upper()
+    m = re.search(r"-(?:MAP|G)(\d+)", upper)
+    if m:
+        return int(m.group(1))
+
+    # Check title
+    m = re.search(r"(?:map|game)[\s\-]*(\d+)", title, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+
+    return None
+
+
 def _parse_date_from_kalshi_ticker(event_ticker: str) -> date | None:
     """Parse date from Kalshi event ticker like KXNBAGAME-26FEB01AVLBRE or KXNBAGAME-26FEB01-..."""
     m = re.search(r"-(\d{2})([A-Z]{3})(\d{2})", event_ticker.upper())
@@ -395,18 +416,21 @@ class KalshiConnector(BaseConnector):
                     no_sub = m.get("no_sub_title", "")
                     rules = m.get("rules_primary", "")
 
-                    # Skip "Tie" markets — we only want team-win markets
-                    if ticker.endswith("-TIE") or no_sub.lower() == "tie":
-                        continue
+                    # Handle Tie/Draw markets for 3-way arbitrage (soccer)
+                    is_tie_market = ticker.endswith("-TIE") or no_sub.lower() == "tie"
+                    if is_tie_market:
+                        yes_team = "Draw"
+                        s1_subtype = "draw"
+                        s1_line = None  # Draw markets don't have lines
+                    else:
+                        # Figure out which team this YES represents
+                        # from rules: "If [Team] wins the..."
+                        yes_team = self._extract_team_from_rules(rules)
+                        if not yes_team:
+                            yes_team = no_sub  # no_sub_title is sometimes the YES team name
 
-                    # Figure out which team this YES represents
-                    # from rules: "If [Team] wins the..."
-                    yes_team = self._extract_team_from_rules(rules)
-                    if not yes_team:
-                        yes_team = no_sub  # no_sub_title is sometimes the YES team name
-
-                    # Detect spread/OU subtype
-                    s1_subtype, s1_line = _detect_market_subtype(ticker, title)
+                        # Detect spread/OU subtype
+                        s1_subtype, s1_line = _detect_market_subtype(ticker, title)
 
                     market = Market(
                         platform=Platform.KALSHI,
@@ -706,12 +730,16 @@ class KalshiConnector(BaseConnector):
         no_sub = m.get("no_sub_title", "")
         rules = m.get("rules_primary", "")
 
-        if ticker.endswith("-TIE") or no_sub.lower() == "tie":
-            return None
-
-        yes_team = self._extract_team_from_rules(rules)
-        if not yes_team:
-            yes_team = no_sub
+        # Handle Tie/Draw markets for 3-way arbitrage (soccer)
+        is_tie_market = ticker.endswith("-TIE") or no_sub.lower() == "tie"
+        if is_tie_market:
+            yes_team = "Draw"
+            market_subtype = "draw"
+        else:
+            yes_team = self._extract_team_from_rules(rules)
+            if not yes_team:
+                yes_team = no_sub
+            market_subtype = None  # Will be detected later
 
         sport = _detect_sport_kalshi(event_ticker)
         game_date = None
@@ -723,6 +751,13 @@ class KalshiConnector(BaseConnector):
             )
         else:
             event_group = _kalshi_event_group(series_ticker, event_ticker)
+
+        # Detect esports map number
+        map_num = None
+        if sport == "esports":
+            map_num = _detect_map_number(ticker, title)
+            if map_num:
+                market_subtype = "map_winner"
 
         market = Market(
             platform=Platform.KALSHI,
@@ -737,6 +772,7 @@ class KalshiConnector(BaseConnector):
             game_date=game_date,
             event_group=event_group,
             line=line_value,
+            map_number=map_num,
             url=f"https://kalshi.com/markets/{(series_ticker or event_ticker.split('-')[0]).lower()}/e/{event_ticker.lower()}",
             raw_data={
                 "yes_team": yes_team,

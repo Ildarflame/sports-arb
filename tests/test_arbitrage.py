@@ -224,3 +224,91 @@ def test_non_live_game_works_normally():
     opp = calculate_arbitrage(event, allow_live=False)
     assert opp is not None
     assert opp.details.get("is_live") is not True
+
+
+# ============================================================
+# 3-Way Arbitrage Tests
+# ============================================================
+
+from datetime import date
+
+from src.engine.arbitrage import calculate_3way_arbitrage
+from src.models import ThreeWayGroup
+
+
+def _make_3way_group(
+    win_a_poly: float, win_a_kalshi: float,
+    draw_poly: float, draw_kalshi: float,
+    win_b_poly: float, win_b_kalshi: float,
+) -> ThreeWayGroup:
+    """Create a 3-way group with markets on both platforms."""
+    def _make_market(platform: Platform, price: float, outcome: str) -> Market:
+        return Market(
+            platform=platform,
+            market_id=f"{platform.value}_{outcome}",
+            event_id="soccer1",
+            title=f"Team {outcome}",
+            team_a="Draw" if outcome == "draw" else outcome.upper(),
+            team_b="",
+            sport="soccer",
+            market_type="game",
+            game_date=date(2026, 2, 10),
+            price=MarketPrice(yes_price=price, no_price=1 - price, volume=5000),
+            raw_data={"market_subtype": "draw" if outcome == "draw" else "moneyline"},
+        )
+
+    return ThreeWayGroup(
+        team_a="Liverpool",
+        team_b="Arsenal",
+        game_date=date(2026, 2, 10),
+        sport="soccer",
+        poly_win_a=_make_market(Platform.POLYMARKET, win_a_poly, "a"),
+        poly_draw=_make_market(Platform.POLYMARKET, draw_poly, "draw"),
+        poly_win_b=_make_market(Platform.POLYMARKET, win_b_poly, "b"),
+        kalshi_win_a=_make_market(Platform.KALSHI, win_a_kalshi, "a"),
+        kalshi_draw=_make_market(Platform.KALSHI, draw_kalshi, "draw"),
+        kalshi_win_b=_make_market(Platform.KALSHI, win_b_kalshi, "b"),
+    )
+
+
+def test_3way_no_arbitrage():
+    """3-way prices sum to >= 1.0 — no arb."""
+    # All prices sum to 1.0 on each platform
+    group = _make_3way_group(
+        win_a_poly=0.40, win_a_kalshi=0.40,
+        draw_poly=0.25, draw_kalshi=0.25,
+        win_b_poly=0.35, win_b_kalshi=0.35,
+    )
+    opp = calculate_3way_arbitrage(group)
+    assert opp is None
+
+
+def test_3way_clear_arbitrage():
+    """3-way prices sum to < 1.0 across platforms — clear arb."""
+    # Best prices: win_a=0.30, draw=0.20, win_b=0.25 = 0.75 total
+    group = _make_3way_group(
+        win_a_poly=0.30, win_a_kalshi=0.35,  # Best: Poly 0.30
+        draw_poly=0.25, draw_kalshi=0.20,     # Best: Kalshi 0.20
+        win_b_poly=0.25, win_b_kalshi=0.30,   # Best: Poly 0.25
+    )
+    opp = calculate_3way_arbitrage(group)
+    assert opp is not None
+    assert opp.details.get("arb_type") == "3way"
+    assert opp.roi_after_fees > 0
+    # Check legs
+    legs = opp.details.get("legs", [])
+    assert len(legs) == 3
+
+
+def test_3way_fees_eat_profit():
+    """3-way where gross profit exists but fees eliminate it."""
+    # Total = 0.99, but after ~2% fees → no profit
+    group = _make_3way_group(
+        win_a_poly=0.34, win_a_kalshi=0.35,
+        draw_poly=0.33, draw_kalshi=0.33,
+        win_b_poly=0.33, win_b_kalshi=0.32,
+    )
+    opp = calculate_3way_arbitrage(group)
+    # With fees, 0.99 * 1.02 ≈ 1.01, so no profit
+    # Should be None or have very low/negative ROI
+    assert opp is None or opp.roi_after_fees < 0.5

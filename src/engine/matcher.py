@@ -721,6 +721,11 @@ def match_events(
                 if pm.line != km.line:
                     continue
 
+            # Map number filter for esports — exact match required
+            if pm_subtype == "map_winner" or pm.map_number is not None:
+                if pm.map_number != km.map_number:
+                    continue
+
             # Use the more specific sport for normalization
             sport = pm.sport or km.sport or ""
 
@@ -823,3 +828,127 @@ def match_events(
         f"{len(matched_events)} total"
     )
     return matched_events
+
+
+def find_3way_groups(
+    poly_markets: list[Market],
+    kalshi_markets: list[Market],
+) -> list["ThreeWayGroup"]:
+    """Find 3-way market groups for soccer matches.
+
+    Groups markets by (team_a, team_b, date) and collects all 3 outcomes
+    (Win A, Draw, Win B) from both platforms for 3-way arbitrage calculation.
+    """
+    from src.models import ThreeWayGroup
+
+    groups: dict[tuple[str, str, str], ThreeWayGroup] = {}
+
+    def _make_group_key(team_a: str, team_b: str, game_date: date | None) -> tuple[str, str, str]:
+        """Create a normalized group key."""
+        a_norm = normalize_team_name(team_a.lower())
+        b_norm = normalize_team_name(team_b.lower())
+        date_str = game_date.isoformat() if game_date else ""
+        # Sort teams to handle swapped order
+        if a_norm > b_norm:
+            a_norm, b_norm = b_norm, a_norm
+        return (a_norm, b_norm, date_str)
+
+    def _is_draw_market(m: Market) -> bool:
+        """Check if market is for Draw outcome."""
+        subtype = m.raw_data.get("market_subtype", "")
+        if subtype == "draw":
+            return True
+        if m.team_a.lower() == "draw":
+            return True
+        return False
+
+    def _get_or_create_group(m: Market) -> ThreeWayGroup | None:
+        """Get or create a 3-way group for a market."""
+        if m.sport not in _THREE_OUTCOME_SPORTS:
+            return None
+        if m.market_type != "game":
+            return None
+
+        # For draw markets, we need to extract team names from the event
+        if _is_draw_market(m):
+            # Try to get teams from event title or raw_data
+            ev_title = m.raw_data.get("event_title", "") or m.title
+            ev_a, ev_b = _extract_vs_teams(ev_title)
+            if not ev_a or not ev_b:
+                return None
+            key = _make_group_key(ev_a, ev_b, m.game_date)
+            if key not in groups:
+                groups[key] = ThreeWayGroup(team_a=ev_a, team_b=ev_b, game_date=m.game_date, sport=m.sport)
+        else:
+            if not m.team_a or not m.team_b:
+                return None
+            key = _make_group_key(m.team_a, m.team_b, m.game_date)
+            if key not in groups:
+                groups[key] = ThreeWayGroup(team_a=m.team_a, team_b=m.team_b, game_date=m.game_date, sport=m.sport)
+
+        return groups[key]
+
+    def _extract_vs_teams(title: str) -> tuple[str, str]:
+        """Extract team names from 'A vs B' title."""
+        for sep in (" vs ", " vs. ", " v ", " @ ", " at "):
+            if sep in title.lower():
+                idx = title.lower().find(sep)
+                return title[:idx].strip(), title[idx + len(sep):].strip()
+        return "", ""
+
+    def _match_team(market_team: str, group: ThreeWayGroup, sport: str) -> str:
+        """Determine if market is for team_a or team_b win."""
+        sim_a = team_similarity(market_team, group.team_a, sport)
+        sim_b = team_similarity(market_team, group.team_b, sport)
+        if sim_a >= TEAM_MATCH_THRESHOLD and sim_a > sim_b:
+            return "a"
+        if sim_b >= TEAM_MATCH_THRESHOLD and sim_b > sim_a:
+            return "b"
+        return ""
+
+    # Process Polymarket markets
+    for m in poly_markets:
+        group = _get_or_create_group(m)
+        if not group:
+            continue
+
+        if _is_draw_market(m):
+            group.poly_draw = m
+        else:
+            which = _match_team(m.team_a, group, m.sport)
+            if which == "a":
+                group.poly_win_a = m
+            elif which == "b":
+                group.poly_win_b = m
+
+    # Process Kalshi markets
+    for m in kalshi_markets:
+        group = _get_or_create_group(m)
+        if not group:
+            continue
+
+        if _is_draw_market(m):
+            group.kalshi_draw = m
+        else:
+            which = _match_team(m.team_a, group, m.sport)
+            if which == "a":
+                group.kalshi_win_a = m
+            elif which == "b":
+                group.kalshi_win_b = m
+
+    # Filter to groups that have at least one complete 3-way set on one platform
+    # or have all 3 outcomes available across platforms
+    valid_groups: list[ThreeWayGroup] = []
+    for g in groups.values():
+        poly_count = sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m is not None)
+        kalshi_count = sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m is not None)
+        # Need at least one outcome from each platform and total >= 4 markets
+        if poly_count >= 1 and kalshi_count >= 1 and poly_count + kalshi_count >= 4:
+            valid_groups.append(g)
+            logger.debug(
+                f"3-way group: {g.team_a} vs {g.team_b} "
+                f"(poly={poly_count}, kalshi={kalshi_count})"
+            )
+
+    logger.info(f"Found {len(valid_groups)} potential 3-way arbitrage groups")
+    return valid_groups

@@ -176,6 +176,23 @@ def _parse_line_value(text: str) -> float | None:
     return None
 
 
+def _detect_map_number(text: str) -> int | None:
+    """Detect esports map number from market title.
+
+    Patterns:
+      "Map 1", "Map 2", "map 3", "MAP1", "map-1"
+      "Game 1", "Game 2" (LoL/Dota series)
+    """
+    # "Map N" or "Game N"
+    m = re.search(r"(?:map|game)[\s\-]*(\d+)", text, re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
 def _parse_game_date_from_question(question: str) -> date | None:
     """Extract date from 'win on 2026-02-01?' pattern."""
     m = re.search(r"on\s+(\d{4}-\d{2}-\d{2})", question)
@@ -438,13 +455,27 @@ class PolymarketConnector(BaseConnector):
             if market_subtype in ("spread", "over_under"):
                 line_value = _parse_line_value(question) or _parse_line_value(group_item_title)
 
+            # Detect esports map number
+            map_num = None
+            if sport == "esports":
+                map_num = (
+                    _detect_map_number(event_title)
+                    or _detect_map_number(question)
+                    or _detect_map_number(group_item_title)
+                )
+                if map_num:
+                    market_subtype = "map_winner"
+
             if neg_risk:
                 # 3-way soccer or multi-outcome futures:
                 # each sub-market is YES/NO for one team
-                if "draw" in group_item_title.lower() or "draw" in question.lower():
-                    continue
-
-                team_name = group_item_title or self._extract_team_from_question(question)
+                is_draw = "draw" in group_item_title.lower() or "draw" in question.lower()
+                if is_draw:
+                    # Store draw markets for 3-way arbitrage
+                    team_name = "Draw"
+                    market_subtype = "draw"
+                else:
+                    team_name = group_item_title or self._extract_team_from_question(question)
                 if not team_name:
                     continue
 
@@ -481,6 +512,7 @@ class PolymarketConnector(BaseConnector):
                     game_date=game_date,
                     event_group=event_group,
                     line=line_value,
+                    map_number=map_num,
                     url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                     price=price,
                     raw_data={
@@ -535,6 +567,7 @@ class PolymarketConnector(BaseConnector):
                         game_date=game_date,
                         event_group=event_group,
                         line=line_value,
+                        map_number=map_num,
                         url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                         price=price,
                         raw_data={

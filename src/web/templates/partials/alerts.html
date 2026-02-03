@@ -60,6 +60,8 @@
             {% endif %}
             {% if d.get('arb_type') == 'cross_team' %}
                 <span class="micro-badge" style="background: var(--purple, #a855f7)">CROSS-TEAM</span>
+            {% elif d.get('arb_type') == '3way' %}
+                <span class="micro-badge" style="background: var(--green, #22c55e)">3-WAY</span>
             {% endif %}
             {% if d.get('is_live') %}
                 <span class="micro-badge" style="background: var(--red, #ef4444); animation: pulse 2s infinite;">LIVE</span>
@@ -68,6 +70,8 @@
                 <span class="micro-badge" style="background: var(--orange, #f97316)">SPREAD {{ d.get('line') }}</span>
             {% elif d.get('market_subtype') == 'over_under' %}
                 <span class="micro-badge" style="background: var(--teal, #14b8a6)">O/U {{ d.get('line')|abs if d.get('line') else '' }}</span>
+            {% elif d.get('market_subtype') == 'map_winner' %}
+                <span class="micro-badge" style="background: var(--cyan, #06b6d4)">MAP {{ d.get('map_number', '?') }}</span>
             {% endif %}
             {% if conf == 'high' %}
                 <span class="micro-badge mb-conf-high" title="{{ conf_tooltip }}">HIGH</span>
