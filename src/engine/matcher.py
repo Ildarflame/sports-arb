@@ -675,6 +675,17 @@ def match_events(
     kalshi_with_team_a = sum(1 for m in kalshi_markets if m.team_a)
     logger.info(f"Markets with team_a: Poly={poly_with_team_a}/{len(poly_markets)}, Kalshi={kalshi_with_team_a}/{len(kalshi_markets)}")
 
+    # Debug: show grouping keys
+    poly_keys = set(_grouping_key(m) for m in poly_markets if m.team_a)
+    kalshi_keys = set(_grouping_key(m) for m in kalshi_markets if m.team_a)
+    common_keys = poly_keys & kalshi_keys
+    logger.info(f"Grouping keys: Poly={len(poly_keys)}, Kalshi={len(kalshi_keys)}, Common={len(common_keys)}")
+    if common_keys:
+        logger.info(f"Common key samples: {list(common_keys)[:5]}")
+    else:
+        logger.info(f"Poly key samples: {list(poly_keys)[:5]}")
+        logger.info(f"Kalshi key samples: {list(kalshi_keys)[:5]}")
+
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
 
