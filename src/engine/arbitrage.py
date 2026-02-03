@@ -112,9 +112,27 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     has_exec_d2 = bool(kp.yes_ask and pp.yes_bid)
 
     # Direction 1: Buy YES on Polymarket, buy NO on Kalshi
+    # After inversion (if teams_swapped), kp.yes = same team as pp.yes
+    # So buying kp.no = buying the OTHER team = kalshi's original YES team
     midpoint_cost_1 = pp.yes_price + kp.no_price
     exec_cost_1 = poly_yes_exec + kalshi_no_exec
     cost_1 = exec_cost_1
+
+    # Determine actual teams and sides for clear display
+    # poly YES = poly_team_a, poly NO = poly_team_b
+    # After inversion: kalshi YES = poly_team_a, kalshi NO = poly_team_b (conceptually)
+    # But on actual Kalshi market: kalshi_team_a is always YES
+    d1_poly_team = poly_market.team_a  # buying Poly YES = team_a
+    d1_poly_side = "YES"
+    if event.teams_swapped:
+        # Inverted NO = original YES = kalshi_team_a
+        d1_kalshi_team = kalshi_market.team_a
+        d1_kalshi_side = "YES"  # actual market side!
+    else:
+        # Not swapped: NO = kalshi_team_b
+        d1_kalshi_team = kalshi_market.team_b
+        d1_kalshi_side = "NO"
+
     if cost_1 < 1.0:
         gross_profit = 1.0 - cost_1
         # Apply fees
@@ -147,7 +165,9 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_yes_ask": pp.yes_ask,
                     "kalshi_yes_bid": kp.yes_bid,
                     "kalshi_yes_ask": kp.yes_ask,
-                    "direction": "YES@Polymarket + NO@Kalshi",
+                    "direction": f"{d1_poly_team}@Poly + {d1_kalshi_team}@Kalshi",
+                    "poly_action": f"Buy {d1_poly_side} ({d1_poly_team})",
+                    "kalshi_action": f"Buy {d1_kalshi_side} ({d1_kalshi_team})",
                     "teams_swapped": event.teams_swapped,
                     "poly_team_a": poly_market.team_a,
                     "poly_team_b": poly_market.team_b,
@@ -167,9 +187,24 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
             )
 
     # Direction 2: Buy YES on Kalshi, buy NO on Polymarket
+    # kp.yes (after inversion if swapped) = poly_team_a
+    # pp.no = poly_team_b
     midpoint_cost_2 = kp.yes_price + pp.no_price
     exec_cost_2 = kalshi_yes_exec + poly_no_exec
     cost_2 = exec_cost_2
+
+    # Determine actual teams and sides for clear display
+    d2_poly_team = poly_market.team_b  # buying Poly NO = team_b
+    d2_poly_side = "NO"
+    if event.teams_swapped:
+        # Inverted YES = original NO = kalshi_team_b (the other team)
+        d2_kalshi_team = kalshi_market.team_b
+        d2_kalshi_side = "NO"  # actual market side!
+    else:
+        # Not swapped: YES = kalshi_team_a
+        d2_kalshi_team = kalshi_market.team_a
+        d2_kalshi_side = "YES"
+
     if cost_2 < 1.0:
         gross_profit = 1.0 - cost_2
         fee_kalshi = kalshi_yes_exec * FEES[Platform.KALSHI]
@@ -200,7 +235,9 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_yes_ask": pp.yes_ask,
                     "kalshi_yes_bid": kp.yes_bid,
                     "kalshi_yes_ask": kp.yes_ask,
-                    "direction": "YES@Kalshi + NO@Polymarket",
+                    "direction": f"{d2_kalshi_team}@Kalshi + {d2_poly_team}@Poly",
+                    "poly_action": f"Buy {d2_poly_side} ({d2_poly_team})",
+                    "kalshi_action": f"Buy {d2_kalshi_side} ({d2_kalshi_team})",
                     "teams_swapped": event.teams_swapped,
                     "poly_team_a": poly_market.team_a,
                     "poly_team_b": poly_market.team_b,

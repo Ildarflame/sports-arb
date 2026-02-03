@@ -47,7 +47,7 @@
     <summary>
         <span class="dot {{ 'dot-exec' if is_exec else 'dot-mid' }}" title="{{ 'Executable bid/ask prices' if is_exec else 'Midpoint estimate' }}"></span>
         <span class="arb-event">{{ opp.team_a }} vs {{ opp.team_b }}</span>
-        <span class="arb-strategy">YES@{{ buy_yes_plat }} + NO@{{ buy_no_plat }}</span>
+        <span class="arb-strategy">{{ d.get('direction', 'YES@' ~ buy_yes_plat ~ ' + NO@' ~ buy_no_plat) }}</span>
         <span class="arb-cost">{{ "%.1f"|format(total * 100) }}c</span>
         <span class="arb-roi">+{{ "%.2f"|format(roi) }}%</span>
         <span class="arb-meta">
@@ -93,6 +93,13 @@
                 <div style="padding: 0.3rem 0.6rem; font-size: 0.72rem; color: var(--yellow); background: rgba(234,179,8,0.08); border-radius: 4px; margin-bottom: 0.5rem;">
                     Нет стакана {{ 'на Polymarket' if not d.get('has_poly_exec') else '' }}{{ ' и ' if not d.get('has_poly_exec') and not d.get('has_kalshi_exec') else '' }}{{ 'на Kalshi' if not d.get('has_kalshi_exec') else '' }} &mdash; цены приблизительные (midpoint API), реальная цена покупки может отличаться
                 </div>
+            {% endif %}
+            {% if d.get('poly_action') and d.get('kalshi_action') %}
+            <div style="padding: 0.5rem; font-size: 0.8rem; background: rgba(34,197,94,0.1); border-radius: 4px; margin-bottom: 0.5rem; border: 1px solid rgba(34,197,94,0.3);">
+                <strong style="color: var(--green);">Что делать:</strong><br>
+                1. Polymarket: <strong>{{ d.get('poly_action') }}</strong><br>
+                2. Kalshi: <strong>{{ d.get('kalshi_action') }}</strong>
+            </div>
             {% endif %}
             <div class="exec-steps">
                 {# Step 1: YES side #}
