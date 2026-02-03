@@ -9,6 +9,10 @@ from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent
 
 logger = logging.getLogger(__name__)
 
+# Sports where draws are possible — cross-team YES+YES is invalid
+# (one of the two YESes must win only in 2-outcome sports)
+_THREE_OUTCOME_SPORTS = {"soccer", "rugby", "cricket"}
+
 
 def _invert_price(p: MarketPrice) -> MarketPrice:
     """Swap YES and NO sides of a price (for teams_swapped events)."""
@@ -34,11 +38,17 @@ def _parse_iso_datetime(dt_str: str | None) -> datetime | None:
         return None
 
 
-def _is_market_expired(market_raw_data: dict, market_type: str) -> bool:
+def _is_market_expired(
+    market_raw_data: dict, market_type: str, allow_live: bool = False
+) -> tuple[bool, bool]:
     """Check if market event has already started (game) or expired (futures).
 
-    For game markets: skip if game has already started (stale prices)
+    For game markets: skip if game has already started (stale prices), unless allow_live=True
     For all markets: skip if close/end time has passed
+
+    Returns:
+        (is_expired, is_live): is_expired=True means skip this market,
+                              is_live=True means game is in progress
     """
     now = datetime.now(UTC)
 
@@ -50,16 +60,20 @@ def _is_market_expired(market_raw_data: dict, market_type: str) -> bool:
     close_time = _parse_iso_datetime(market_raw_data.get("close_time"))
     expiration_time = _parse_iso_datetime(market_raw_data.get("expiration_time"))
 
-    # For game markets: if game has started, prices are likely stale
-    if market_type == "game" and game_start and game_start < now:
-        return True
-
-    # Check if market close/end time has passed
+    # Check if market close/end time has passed — always expired
     market_end = end_date or close_time or expiration_time
     if market_end and market_end < now:
-        return True
+        return True, False
 
-    return False
+    # For game markets: check if game has started
+    is_live = False
+    if market_type == "game" and game_start and game_start < now:
+        is_live = True
+        # If live not allowed, mark as expired
+        if not allow_live:
+            return True, True
+
+    return False, is_live
 
 
 def _exec_buy_price(price: MarketPrice, side: str) -> float:
@@ -82,7 +96,9 @@ def _exec_buy_price(price: MarketPrice, side: str) -> float:
         return price.no_price
 
 
-def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
+def calculate_arbitrage(
+    event: SportEvent, allow_live: bool | None = None
+) -> ArbitrageOpportunity | None:
     """Check for arbitrage opportunity on a matched event.
 
     Strategy: Buy YES on one platform and NO on another.
@@ -91,6 +107,10 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     We check both directions:
       1) YES on Polymarket + NO on Kalshi
       2) YES on Kalshi + NO on Polymarket
+
+    Args:
+        event: The matched sport event to check
+        allow_live: Override for live mode. If None, uses settings.allow_live_arbs
     """
     poly_market = event.markets.get(Platform.POLYMARKET)
     kalshi_market = event.markets.get(Platform.KALSHI)
@@ -100,14 +120,26 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     if not poly_market.price or not kalshi_market.price:
         return None
 
+    # Determine if live mode is enabled
+    live_enabled = allow_live if allow_live is not None else settings.allow_live_arbs
+
     # F0.1: Skip markets where event has already started or market expired
     market_type = poly_market.market_type or kalshi_market.market_type or "game"
-    if _is_market_expired(poly_market.raw_data, market_type):
+    poly_expired, poly_is_live = _is_market_expired(
+        poly_market.raw_data, market_type, allow_live=live_enabled
+    )
+    if poly_expired:
         logger.debug(f"Skipping {event.title}: Polymarket event expired/started")
         return None
-    if _is_market_expired(kalshi_market.raw_data, market_type):
+    kalshi_expired, kalshi_is_live = _is_market_expired(
+        kalshi_market.raw_data, market_type, allow_live=live_enabled
+    )
+    if kalshi_expired:
         logger.debug(f"Skipping {event.title}: Kalshi event expired/started")
         return None
+
+    # Track if this is a live game
+    is_live = poly_is_live or kalshi_is_live
 
     pp = normalize_price(poly_market.price, Platform.POLYMARKET)
     kp = normalize_price(kalshi_market.price, Platform.KALSHI)
@@ -121,6 +153,8 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     poly_url = poly_market.url or ""
     kalshi_url = kalshi_market.url or ""
     market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
+    # Get line for spread/O-U markets
+    market_line = poly_market.line or kalshi_market.line
 
     # Skip markets with insufficient liquidity — need volume on BOTH platforms
     poly_vol = poly_market.price.volume if poly_market.price else 0
@@ -209,6 +243,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                 roi_after_fees=round(roi, 2),
                 found_at=datetime.now(UTC),
                 details={
+                    "arb_type": "yes_no",
                     "poly_yes": pp.yes_price,
                     "poly_no": pp.no_price,
                     "kalshi_yes": kp.yes_price,
@@ -224,6 +259,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_team_a": poly_market.team_a,
                     "poly_team_b": poly_market.team_b,
                     "kalshi_team_a": kalshi_market.team_a,
+                    "line": market_line,
                     "kalshi_team_b": kalshi_market.team_b,
                     "poly_url": poly_url,
                     "kalshi_url": kalshi_url,
@@ -279,6 +315,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                 roi_after_fees=round(roi, 2),
                 found_at=datetime.now(UTC),
                 details={
+                    "arb_type": "yes_no",
                     "poly_yes": pp.yes_price,
                     "poly_no": pp.no_price,
                     "kalshi_yes": kp.yes_price,
@@ -295,6 +332,7 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "poly_team_b": poly_market.team_b,
                     "kalshi_team_a": kalshi_market.team_a,
                     "kalshi_team_b": kalshi_market.team_b,
+                    "line": market_line,
                     "poly_url": poly_url,
                     "kalshi_url": kalshi_url,
                     "poly_volume": poly_vol,
@@ -307,6 +345,171 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
                     "market_type": market_type,
                 },
             )
+
+    # Direction 3-4: Cross-team arbitrage (YES_A + YES_B)
+    # Only valid for 2-outcome sports where exactly one team wins
+    sport = poly_market.sport or kalshi_market.sport or ""
+    if sport not in _THREE_OUTCOME_SPORTS and not event.teams_swapped:
+        # For cross-team, we need ORIGINAL Kalshi prices (before any inversion)
+        # Since teams_swapped=False here, kp already has original prices
+        # Cross-team: Buy Poly YES (team_a wins) + Kalshi YES_B (team_b wins)
+        # This works because: if team_a wins → Poly YES pays, if team_b wins → Kalshi YES pays
+        # We need Kalshi's team_b YES price, but Kalshi markets are per-team
+        # So we use: Poly YES_A + (1 - Kalshi YES_A) conceptually equals team_a + team_b coverage
+        # Actually for cross-team: we buy Poly team_a YES + Kalshi original NO (which is team_b)
+        # This is Direction 1 when not swapped. Let me reconsider...
+        #
+        # Cross-team scenario: Poly has "Team A to win" (YES=A wins, NO=A loses)
+        # Kalshi has separate markets: "Team A to win" and "Team B to win"
+        # We want: Poly YES_A (0.45) + Kalshi YES_B (0.50) = 0.95 < 1.0
+        # But current model only matches ONE Kalshi market (the team_a market)
+        # So kalshi.yes = A wins, kalshi.no = A doesn't win
+        # For 2-outcome: A doesn't win = B wins, so kalshi.no = B wins
+        # Thus: Poly YES_A + Kalshi NO_A = YES_A + YES_B (conceptually)
+        # This IS Direction 1 already! So cross-team is already covered when teams align.
+        #
+        # The TRUE cross-team case is when teams_swapped=True:
+        # Poly team_a = Kalshi team_b (swapped), so:
+        # Poly YES = Poly team_a wins = Kalshi team_b wins
+        # To get coverage: Poly YES + Kalshi YES (original, before inversion)
+        # = Poly team_a + Kalshi team_a = covers both outcomes
+        pass
+
+    # For teams_swapped cases in 2-outcome sports:
+    # We can do cross-team by using ORIGINAL Kalshi prices
+    if sport not in _THREE_OUTCOME_SPORTS and event.teams_swapped:
+        # Original Kalshi: YES = kalshi_team_a, NO = kalshi_team_b
+        # After swap: Poly team_a = Kalshi team_b
+        # Cross-team: Poly YES (poly_team_a) + Kalshi original YES (kalshi_team_a)
+        # = poly_team_a wins + kalshi_team_a wins
+        # Since poly_team_a = kalshi_team_b, this covers: kalshi_team_b wins OR kalshi_team_a wins
+        # = all outcomes (for 2-outcome sport)
+        kp_original = normalize_price(kalshi_market.price, Platform.KALSHI)
+
+        # Direction 3: Poly YES + Kalshi original YES (cross-team)
+        cross_cost_3 = poly_yes_exec + _exec_buy_price(kp_original, "yes")
+        if cross_cost_3 < 1.0:
+            gross_profit = 1.0 - cross_cost_3
+            kalshi_orig_yes_exec = _exec_buy_price(kp_original, "yes")
+            fee_poly = poly_yes_exec * FEES[Platform.POLYMARKET]
+            fee_kalshi = kalshi_orig_yes_exec * FEES[Platform.KALSHI]
+            net_profit = gross_profit - fee_poly - fee_kalshi
+            net_cost = cross_cost_3 + fee_poly + fee_kalshi
+            roi = (net_profit / net_cost) * 100 if net_cost > 0 else 0
+
+            # Cross-team: poly_team_a + kalshi_team_a (they're different teams due to swap)
+            d3_poly_team = poly_market.team_a
+            d3_kalshi_team = kalshi_market.team_a
+
+            if roi > best_roi:
+                best_roi = roi
+                best_opp = ArbitrageOpportunity(
+                    event_title=event.title,
+                    team_a=event.team_a,
+                    team_b=event.team_b,
+                    platform_buy_yes=Platform.POLYMARKET,
+                    platform_buy_no=Platform.KALSHI,  # conceptually buying "other team YES"
+                    yes_price=poly_yes_exec,
+                    no_price=kalshi_orig_yes_exec,
+                    total_cost=round(net_cost, 4),
+                    profit_pct=round(gross_profit * 100, 2),
+                    roi_after_fees=round(roi, 2),
+                    found_at=datetime.now(UTC),
+                    details={
+                        "arb_type": "cross_team",
+                        "poly_yes": pp.yes_price,
+                        "poly_no": pp.no_price,
+                        "kalshi_yes": kp_original.yes_price,
+                        "kalshi_no": kp_original.no_price,
+                        "poly_yes_bid": pp.yes_bid,
+                        "poly_yes_ask": pp.yes_ask,
+                        "kalshi_yes_bid": kp_original.yes_bid,
+                        "kalshi_yes_ask": kp_original.yes_ask,
+                        "direction": f"{d3_poly_team}@Poly + {d3_kalshi_team}@Kalshi (CROSS)",
+                        "poly_action": f"Buy YES ({d3_poly_team})",
+                        "kalshi_action": f"Buy YES ({d3_kalshi_team})",
+                        "teams_swapped": event.teams_swapped,
+                        "poly_team_a": poly_market.team_a,
+                        "poly_team_b": poly_market.team_b,
+                        "kalshi_team_a": kalshi_market.team_a,
+                        "kalshi_team_b": kalshi_market.team_b,
+                        "line": market_line,
+                        "poly_url": poly_url,
+                        "kalshi_url": kalshi_url,
+                        "poly_volume": poly_vol,
+                        "kalshi_volume": kalshi_vol,
+                        "spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+                        "midpoint_cost": round(cross_cost_3, 4),
+                        "exec_cost": round(cross_cost_3, 4),
+                        "executable": bool(pp.yes_ask and kp_original.yes_ask),
+                        "market_subtype": market_subtype,
+                        "market_type": market_type,
+                    },
+                )
+
+        # Direction 4: Poly NO + Kalshi original NO (cross-team, opposite direction)
+        # Poly NO = poly_team_b wins, Kalshi original NO = kalshi_team_b wins
+        # Since poly_team_a = kalshi_team_b (swapped), poly_team_b = kalshi_team_a
+        # So: poly_team_b + kalshi_team_b = kalshi_team_a + kalshi_team_b = all outcomes
+        cross_cost_4 = poly_no_exec + _exec_buy_price(kp_original, "no")
+        if cross_cost_4 < 1.0:
+            gross_profit = 1.0 - cross_cost_4
+            kalshi_orig_no_exec = _exec_buy_price(kp_original, "no")
+            fee_poly = poly_no_exec * FEES[Platform.POLYMARKET]
+            fee_kalshi = kalshi_orig_no_exec * FEES[Platform.KALSHI]
+            net_profit = gross_profit - fee_poly - fee_kalshi
+            net_cost = cross_cost_4 + fee_poly + fee_kalshi
+            roi = (net_profit / net_cost) * 100 if net_cost > 0 else 0
+
+            # Cross-team: poly_team_b + kalshi_team_b
+            d4_poly_team = poly_market.team_b
+            d4_kalshi_team = kalshi_market.team_b
+
+            if roi > best_roi:
+                best_roi = roi
+                best_opp = ArbitrageOpportunity(
+                    event_title=event.title,
+                    team_a=event.team_a,
+                    team_b=event.team_b,
+                    platform_buy_yes=Platform.POLYMARKET,
+                    platform_buy_no=Platform.KALSHI,
+                    yes_price=poly_no_exec,
+                    no_price=kalshi_orig_no_exec,
+                    total_cost=round(net_cost, 4),
+                    profit_pct=round(gross_profit * 100, 2),
+                    roi_after_fees=round(roi, 2),
+                    found_at=datetime.now(UTC),
+                    details={
+                        "arb_type": "cross_team",
+                        "poly_yes": pp.yes_price,
+                        "poly_no": pp.no_price,
+                        "kalshi_yes": kp_original.yes_price,
+                        "kalshi_no": kp_original.no_price,
+                        "poly_yes_bid": pp.yes_bid,
+                        "poly_yes_ask": pp.yes_ask,
+                        "kalshi_yes_bid": kp_original.yes_bid,
+                        "kalshi_yes_ask": kp_original.yes_ask,
+                        "direction": f"{d4_poly_team}@Poly + {d4_kalshi_team}@Kalshi (CROSS)",
+                        "poly_action": f"Buy NO ({d4_poly_team})",
+                        "kalshi_action": f"Buy NO ({d4_kalshi_team})",
+                        "teams_swapped": event.teams_swapped,
+                        "poly_team_a": poly_market.team_a,
+                        "poly_team_b": poly_market.team_b,
+                        "kalshi_team_a": kalshi_market.team_a,
+                        "kalshi_team_b": kalshi_market.team_b,
+                        "line": market_line,
+                        "poly_url": poly_url,
+                        "kalshi_url": kalshi_url,
+                        "poly_volume": poly_vol,
+                        "kalshi_volume": kalshi_vol,
+                        "spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+                        "midpoint_cost": round(cross_cost_4, 4),
+                        "exec_cost": round(cross_cost_4, 4),
+                        "executable": bool(pp.yes_bid and kp_original.yes_bid),
+                        "market_subtype": market_subtype,
+                        "market_type": market_type,
+                    },
+                )
 
     if best_opp:
         # Flag suspicious: wide bid-ask spread suggests illiquidity
@@ -353,7 +556,54 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
             and narrow_spread
         )
 
+        # Live game handling
+        if is_live:
+            best_opp.details["is_live"] = True
+            # Stricter validation for live arbs
+            live_valid = _validate_live_arb(best_opp)
+            if not live_valid:
+                logger.info(
+                    f"LIVE ARB REJECTED: {event.title} (failed live validation)"
+                )
+                return None
+            logger.info(
+                f"LIVE ARB: {event.title} | ROI={best_opp.roi_after_fees}%"
+            )
+
     return best_opp
+
+
+def _validate_live_arb(opp: ArbitrageOpportunity) -> bool:
+    """Stricter validation for live (in-progress) game arbitrage.
+
+    Live games have faster price movements and higher risk of stale prices,
+    so we require higher confidence levels.
+    """
+    # Must have real bid/ask data (not just midpoint)
+    if not opp.details.get("executable"):
+        return False
+
+    # Must meet minimum confidence
+    conf = opp.details.get("confidence", "low")
+    min_conf = settings.live_min_confidence
+    conf_levels = {"low": 0, "medium": 1, "high": 2}
+    if conf_levels.get(conf, 0) < conf_levels.get(min_conf, 2):
+        return False
+
+    # Spread must be tight
+    spread = opp.details.get("spread_pct")
+    if spread is not None and spread > settings.live_max_spread_pct:
+        return False
+
+    # ROI must not be suspiciously high (likely stale prices)
+    if opp.roi_after_fees > settings.live_max_roi:
+        return False
+
+    # Cannot be flagged as suspicious
+    if opp.details.get("suspicious"):
+        return False
+
+    return True
 
 
 def calculate_bet_sizes(

@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     max_arb_percent: float = 50.0
     min_volume: int = 0
 
+    # Live mode settings
+    allow_live_arbs: bool = False  # Allow arbs on in-progress games
+    live_min_confidence: str = "high"  # Minimum confidence for live arbs
+    live_max_spread_pct: float = 10.0  # Maximum spread % for live arbs
+    live_max_roi: float = 50.0  # Maximum ROI for live (high ROI on live = suspicious)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

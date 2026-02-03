@@ -574,9 +574,26 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                         _km = event.markets.get(Platform.KALSHI)
                         _sport = (_pm.sport if _pm else "") or (_km.sport if _km else "")
                         opp_id = await db.save_opportunity(opp, sport=_sport)
+
+                        # Diagnostic: Log spread/O-U and other special market types
+                        _subtype = opp.details.get("market_subtype", "moneyline")
+                        _line = opp.details.get("line")
+                        _arb_type = opp.details.get("arb_type", "yes_no")
+                        _is_live = opp.details.get("is_live", False)
+
+                        type_info = ""
+                        if _subtype == "spread":
+                            type_info = f" [SPREAD {_line}]"
+                        elif _subtype == "over_under":
+                            type_info = f" [O/U {abs(_line) if _line else ''}]"
+                        if _arb_type == "cross_team":
+                            type_info += " [CROSS-TEAM]"
+                        if _is_live:
+                            type_info += " [LIVE]"
+
                         logger.info(
                             f"ARBITRAGE SAVED: {opp.event_title} "
-                            f"ROI={opp.roi_after_fees}% id={opp_id}"
+                            f"ROI={opp.roi_after_fees}% id={opp_id}{type_info}"
                         )
                         broadcast_event("new_arb", {
                             "event": opp.event_title,
