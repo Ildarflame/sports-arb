@@ -670,6 +670,11 @@ def match_events(
     poly_markets = _dedup_markets(poly_markets)
     kalshi_markets = _dedup_markets(kalshi_markets)
 
+    # Debug: count markets with team_a
+    poly_with_team_a = sum(1 for m in poly_markets if m.team_a)
+    kalshi_with_team_a = sum(1 for m in kalshi_markets if m.team_a)
+    logger.info(f"Markets with team_a: Poly={poly_with_team_a}/{len(poly_markets)}, Kalshi={kalshi_with_team_a}/{len(kalshi_markets)}")
+
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
 
