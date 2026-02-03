@@ -24,6 +24,44 @@ def _invert_price(p: MarketPrice) -> MarketPrice:
     )
 
 
+def _parse_iso_datetime(dt_str: str | None) -> datetime | None:
+    """Parse ISO datetime string to datetime object."""
+    if not dt_str:
+        return None
+    try:
+        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_market_expired(market_raw_data: dict, market_type: str) -> bool:
+    """Check if market event has already started (game) or expired (futures).
+
+    For game markets: skip if game has already started (stale prices)
+    For all markets: skip if close/end time has passed
+    """
+    now = datetime.now(UTC)
+
+    # Polymarket fields
+    game_start = _parse_iso_datetime(market_raw_data.get("game_start_time"))
+    end_date = _parse_iso_datetime(market_raw_data.get("end_date"))
+
+    # Kalshi fields
+    close_time = _parse_iso_datetime(market_raw_data.get("close_time"))
+    expiration_time = _parse_iso_datetime(market_raw_data.get("expiration_time"))
+
+    # For game markets: if game has started, prices are likely stale
+    if market_type == "game" and game_start and game_start < now:
+        return True
+
+    # Check if market close/end time has passed
+    market_end = end_date or close_time or expiration_time
+    if market_end and market_end < now:
+        return True
+
+    return False
+
+
 def _exec_buy_price(price: MarketPrice, side: str) -> float:
     """Executable price for buying YES or NO side.
 
@@ -62,6 +100,15 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     if not poly_market.price or not kalshi_market.price:
         return None
 
+    # F0.1: Skip markets where event has already started or market expired
+    market_type = poly_market.market_type or kalshi_market.market_type or "game"
+    if _is_market_expired(poly_market.raw_data, market_type):
+        logger.debug(f"Skipping {event.title}: Polymarket event expired/started")
+        return None
+    if _is_market_expired(kalshi_market.raw_data, market_type):
+        logger.debug(f"Skipping {event.title}: Kalshi event expired/started")
+        return None
+
     pp = normalize_price(poly_market.price, Platform.POLYMARKET)
     kp = normalize_price(kalshi_market.price, Platform.KALSHI)
 
@@ -74,7 +121,6 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     poly_url = poly_market.url or ""
     kalshi_url = kalshi_market.url or ""
     market_subtype = poly_market.raw_data.get("market_subtype", "moneyline")
-    market_type = poly_market.market_type or kalshi_market.market_type or "game"
 
     # Skip markets with insufficient liquidity — need volume on BOTH platforms
     poly_vol = poly_market.price.volume if poly_market.price else 0

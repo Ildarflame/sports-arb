@@ -492,6 +492,8 @@ class PolymarketConnector(BaseConnector):
                         "sports_market_type": sports_type,
                         "market_subtype": market_subtype,
                         "neg_risk": True,
+                        "game_start_time": m.get("gameStartTime"),
+                        "end_date": m.get("endDate") or event.get("endDate"),
                     },
                 ))
             else:
@@ -545,6 +547,8 @@ class PolymarketConnector(BaseConnector):
                             "sports_market_type": sports_type,
                             "market_subtype": market_subtype,
                             "neg_risk": False,
+                            "game_start_time": m.get("gameStartTime"),
+                            "end_date": m.get("endDate") or event.get("endDate"),
                         },
                     ))
 

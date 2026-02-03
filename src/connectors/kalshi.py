@@ -430,6 +430,8 @@ class KalshiConnector(BaseConnector):
                             "event_ticker": event_ticker,
                             "series_ticker": m.get("series_ticker", ""),
                             "market_subtype": s1_subtype,
+                            "close_time": m.get("close_time"),
+                            "expiration_time": m.get("expiration_time"),
                         },
                     )
 
@@ -742,6 +744,8 @@ class KalshiConnector(BaseConnector):
                 "event_ticker": event_ticker,
                 "series_ticker": series_ticker,
                 "market_subtype": market_subtype,
+                "close_time": m.get("close_time"),
+                "expiration_time": m.get("expiration_time"),
             },
         )
 
