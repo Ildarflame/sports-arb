@@ -718,10 +718,15 @@ def calculate_3way_arbitrage(
 
     # Need all 3 outcomes to have valid prices
     if win_a_price <= 0 or draw_price <= 0 or win_b_price <= 0:
+        logger.debug(f"3-way {group.team_a} vs {group.team_b}: missing prices (A={win_a_price}, D={draw_price}, B={win_b_price})")
         return None
 
     # Calculate total cost (before fees)
     total_cost = win_a_price + draw_price + win_b_price
+
+    # Log close calls for debugging
+    if total_cost < 1.05:
+        logger.info(f"3-way {group.team_a} vs {group.team_b}: cost={total_cost:.4f} (A={win_a_price:.3f}@{win_a_platform.value}, D={draw_price:.3f}@{draw_platform.value}, B={win_b_price:.3f}@{win_b_platform.value})")
 
     # Check for arbitrage
     if total_cost >= 1.0:

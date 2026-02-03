@@ -931,49 +931,56 @@ class PolymarketConnector(BaseConnector):
                         if not self._running:
                             break
                         try:
-                            msg = json.loads(raw_msg)
-                            event_type = msg.get("event_type", msg.get("type", ""))
+                            parsed = json.loads(raw_msg)
+                            # Handle both single message and array of messages
+                            messages = parsed if isinstance(parsed, list) else [parsed]
 
-                            if event_type == "price_change":
-                                # price_change events have nested price_changes array
-                                for change in msg.get("price_changes", []):
-                                    token_id = change.get("asset_id", "")
-                                    price = float(change.get("price", 0))
-                                    if token_id and price > 0:
-                                        mp = MarketPrice(
-                                            yes_price=price,
-                                            no_price=round(1 - price, 4),
-                                            last_updated=datetime.now(UTC),
-                                        )
-                                        # Include bid/ask if available
-                                        bb = change.get("best_bid")
-                                        ba = change.get("best_ask")
-                                        if bb:
-                                            mp.yes_bid = float(bb)
-                                        if ba:
-                                            mp.yes_ask = float(ba)
-                                        yield (token_id, mp)
+                            for msg in messages:
+                                if not isinstance(msg, dict):
+                                    continue
 
-                            elif event_type == "best_bid_ask":
-                                # best_bid_ask events (enabled by custom_feature_enabled)
-                                token_id = msg.get("asset_id", "")
-                                bb = msg.get("best_bid")
-                                ba = msg.get("best_ask")
-                                if token_id and (bb or ba):
-                                    bid = float(bb) if bb else None
-                                    ask = float(ba) if ba else None
-                                    mid = ((bid or 0) + (ask or 0)) / 2 if bid and ask else (bid or ask or 0)
-                                    if mid > 0:
-                                        yield (
-                                            token_id,
-                                            MarketPrice(
-                                                yes_price=round(mid, 4),
-                                                no_price=round(1 - mid, 4),
-                                                yes_bid=bid,
-                                                yes_ask=ask,
+                                event_type = msg.get("event_type", msg.get("type", ""))
+
+                                if event_type == "price_change":
+                                    # price_change events have nested price_changes array
+                                    for change in msg.get("price_changes", []):
+                                        token_id = change.get("asset_id", "")
+                                        price = float(change.get("price", 0))
+                                        if token_id and price > 0:
+                                            mp = MarketPrice(
+                                                yes_price=price,
+                                                no_price=round(1 - price, 4),
                                                 last_updated=datetime.now(UTC),
-                                            ),
-                                        )
+                                            )
+                                            # Include bid/ask if available
+                                            bb = change.get("best_bid")
+                                            ba = change.get("best_ask")
+                                            if bb:
+                                                mp.yes_bid = float(bb)
+                                            if ba:
+                                                mp.yes_ask = float(ba)
+                                            yield (token_id, mp)
+
+                                elif event_type == "best_bid_ask":
+                                    # best_bid_ask events (enabled by custom_feature_enabled)
+                                    token_id = msg.get("asset_id", "")
+                                    bb = msg.get("best_bid")
+                                    ba = msg.get("best_ask")
+                                    if token_id and (bb or ba):
+                                        bid = float(bb) if bb else None
+                                        ask = float(ba) if ba else None
+                                        mid = ((bid or 0) + (ask or 0)) / 2 if bid and ask else (bid or ask or 0)
+                                        if mid > 0:
+                                            yield (
+                                                token_id,
+                                                MarketPrice(
+                                                    yes_price=round(mid, 4),
+                                                    no_price=round(1 - mid, 4),
+                                                    yes_bid=bid,
+                                                    yes_ask=ask,
+                                                    last_updated=datetime.now(UTC),
+                                                ),
+                                            )
 
                         except (json.JSONDecodeError, ValueError):
                             continue
