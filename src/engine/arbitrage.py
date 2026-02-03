@@ -162,8 +162,8 @@ def calculate_arbitrage(
     if (poly_vol or 0) == 0 or (kalshi_vol or 0) == 0:
         return None
     combined_vol = (poly_vol or 0) + (kalshi_vol or 0)
-    # Q3: Increased minimum volume threshold for better liquidity
-    if combined_vol < 500:
+    # Q3: Minimum volume threshold (lowered for more candidates)
+    if combined_vol < 100:
         return None
 
     # Compute bid-ask spread percentage for liquidity check
@@ -171,8 +171,8 @@ def calculate_arbitrage(
     if pp.yes_bid is not None and pp.yes_ask is not None and pp.yes_ask > 0:
         spread_pct = ((pp.yes_ask - pp.yes_bid) / pp.yes_ask) * 100
 
-    # Q2: Skip markets with wide bid-ask spread (illiquid)
-    if spread_pct is not None and spread_pct > 30:
+    # Q2: Skip markets with wide bid-ask spread (relaxed for more candidates)
+    if spread_pct is not None and spread_pct > 50:
         logger.debug(f"Skipping {event.title}: spread too wide ({spread_pct:.0f}%)")
         return None
 
