@@ -682,8 +682,11 @@ def match_events(
     poly_only = poly_keys - kalshi_keys
     kalshi_only = kalshi_keys - poly_keys
     logger.info(f"Grouping keys: Poly={len(poly_keys)}, Kalshi={len(kalshi_keys)}, Common={len(common_keys)}")
-    logger.info(f"Poly-only keys: {sorted(poly_only)[:10]}")
-    logger.info(f"Kalshi-only keys: {sorted(kalshi_only)[:10]}")
+    # Sort with None-safe key
+    logger.info(f"Poly-only keys: {sorted(poly_only, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))[:10]}")
+    logger.info(f"Kalshi-only keys: {sorted(kalshi_only, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))[:10]}")
+    if common_keys:
+        logger.info(f"Common keys: {sorted(common_keys, key=lambda x: (x[0] or '', x[1] or '', x[2] or ''))}")
 
     matched_events: list[SportEvent] = []
     used_kalshi: set[str] = set()
