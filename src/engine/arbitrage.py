@@ -724,9 +724,9 @@ def calculate_3way_arbitrage(
     # Calculate total cost (before fees)
     total_cost = win_a_price + draw_price + win_b_price
 
-    # Log close calls for debugging
-    if total_cost < 1.05:
-        logger.info(f"3-way {group.team_a} vs {group.team_b}: cost={total_cost:.4f} (A={win_a_price:.3f}@{win_a_platform.value}, D={draw_price:.3f}@{draw_platform.value}, B={win_b_price:.3f}@{win_b_platform.value})")
+    # Log only real arb candidates (cost < 1.0)
+    if total_cost < 1.0:
+        logger.debug(f"3-way {group.team_a} vs {group.team_b}: cost={total_cost:.4f} (A={win_a_price:.3f}@{win_a_platform.value}, D={draw_price:.3f}@{draw_platform.value}, B={win_b_price:.3f}@{win_b_platform.value})")
 
     # Check for arbitrage
     if total_cost >= 1.0:

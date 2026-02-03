@@ -951,14 +951,6 @@ def find_3way_groups(
     cross_platform = sum(1 for g in groups.values()
                         if sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m) > 0
                         and sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m) > 0)
-    if cross_platform == 0 and kalshi_only_groups > 0:
-        # Log sample Kalshi group keys for debugging
-        kalshi_keys = [k for k, g in groups.items()
-                      if sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m) > 0][:5]
-        poly_keys = [k for k, g in groups.items()
-                    if sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m) > 0][:5]
-        logger.info(f"3-way KEY DEBUG - Kalshi: {kalshi_keys}")
-        logger.info(f"3-way KEY DEBUG - Poly: {poly_keys}")
 
     # For arb calculation, we only need Poly-complete groups (3 from poly)
     # since we're comparing Poly prices to each other across the 3 outcomes
