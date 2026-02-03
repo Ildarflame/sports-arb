@@ -870,13 +870,17 @@ def find_3way_groups(
         if m.market_type != "game":
             return None
 
-        # For draw markets, we need to extract team names from the event
+        # For draw markets, we need to extract team names
         if _is_draw_market(m):
-            # Try to get teams from event title or raw_data
-            ev_title = m.raw_data.get("event_title", "") or m.title
-            ev_a, ev_b = _extract_vs_teams(ev_title)
-            if not ev_a or not ev_b:
-                return None
+            # Kalshi draw markets already have team_a/team_b set correctly
+            if m.team_a and m.team_b and m.team_a.lower() != "draw":
+                ev_a, ev_b = m.team_a, m.team_b
+            else:
+                # Polymarket draw: try to extract from event title
+                ev_title = m.raw_data.get("event_title", "") or m.title
+                ev_a, ev_b = _extract_vs_teams(ev_title)
+                if not ev_a or not ev_b:
+                    return None
             key = _make_group_key(ev_a, ev_b, m.game_date)
             if key not in groups:
                 groups[key] = ThreeWayGroup(team_a=ev_a, team_b=ev_b, game_date=m.game_date, sport=m.sport)
@@ -937,19 +941,25 @@ def find_3way_groups(
             elif which == "b":
                 group.kalshi_win_b = m
 
-    # Filter to groups that have at least one complete 3-way set on one platform
-    # or have all 3 outcomes available across platforms
+    # Log group stats
+    poly_only_groups = sum(1 for g in groups.values()
+                          if sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m) == 3
+                          and sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m) == 0)
+    kalshi_only_groups = sum(1 for g in groups.values()
+                            if sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m) == 3
+                            and sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m) == 0)
+
+    # For arb calculation, we only need Poly-complete groups (3 from poly)
+    # since we're comparing Poly prices to each other across the 3 outcomes
     valid_groups: list[ThreeWayGroup] = []
     for g in groups.values():
         poly_count = sum(1 for m in [g.poly_win_a, g.poly_draw, g.poly_win_b] if m is not None)
         kalshi_count = sum(1 for m in [g.kalshi_win_a, g.kalshi_draw, g.kalshi_win_b] if m is not None)
-        # Need at least one outcome from each platform and total >= 4 markets
-        if poly_count >= 1 and kalshi_count >= 1 and poly_count + kalshi_count >= 4:
-            valid_groups.append(g)
-            logger.debug(
-                f"3-way group: {g.team_a} vs {g.team_b} "
-                f"(poly={poly_count}, kalshi={kalshi_count})"
-            )
 
-    logger.info(f"Found {len(valid_groups)} potential 3-way arbitrage groups")
+        # Accept groups with complete Poly set (cross-platform arb possible)
+        # OR groups with at least 4 total markets across platforms
+        if poly_count == 3 or kalshi_count == 3 or (poly_count + kalshi_count >= 4):
+            valid_groups.append(g)
+
+    logger.info(f"Found {len(valid_groups)} potential 3-way arbitrage groups (poly-only={poly_only_groups}, kalshi-only={kalshi_only_groups})")
     return valid_groups
