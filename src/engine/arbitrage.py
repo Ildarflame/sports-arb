@@ -128,13 +128,19 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
     if (poly_vol or 0) == 0 or (kalshi_vol or 0) == 0:
         return None
     combined_vol = (poly_vol or 0) + (kalshi_vol or 0)
-    if combined_vol < 100:
+    # Q3: Increased minimum volume threshold for better liquidity
+    if combined_vol < 500:
         return None
 
     # Compute bid-ask spread percentage for liquidity check
     spread_pct = None
     if pp.yes_bid is not None and pp.yes_ask is not None and pp.yes_ask > 0:
         spread_pct = ((pp.yes_ask - pp.yes_bid) / pp.yes_ask) * 100
+
+    # Q2: Skip markets with wide bid-ask spread (illiquid)
+    if spread_pct is not None and spread_pct > 30:
+        logger.debug(f"Skipping {event.title}: spread too wide ({spread_pct:.0f}%)")
+        return None
 
     # Skip markets with no liquidity (price at 0 or 1)
     MIN_PRICE = 0.01
@@ -337,6 +343,15 @@ def calculate_arbitrage(event: SportEvent) -> ArbitrageOpportunity | None:
             best_opp.details["confidence"] = "medium"
         else:
             best_opp.details["confidence"] = "low"
+
+        # Q4: Auto-eligible flag for automated trading
+        is_suspicious = best_opp.details.get("suspicious", False)
+        conf = best_opp.details.get("confidence", "low")
+        best_opp.details["auto_eligible"] = (
+            conf == "high"
+            and not is_suspicious
+            and narrow_spread
+        )
 
     return best_opp
 
