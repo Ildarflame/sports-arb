@@ -735,11 +735,13 @@ class KalshiConnector(BaseConnector):
         if is_tie_market:
             yes_team = "Draw"
             market_subtype = "draw"
+            line_value = None
         else:
             yes_team = self._extract_team_from_rules(rules)
             if not yes_team:
                 yes_team = no_sub
-            market_subtype = None  # Will be detected later
+            # Detect spread/over_under/moneyline from ticker
+            market_subtype, line_value = _detect_market_subtype(ticker, title)
 
         sport = _detect_sport_kalshi(event_ticker)
         game_date = None
