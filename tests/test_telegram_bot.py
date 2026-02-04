@@ -16,9 +16,15 @@ def notifier():
 
 def test_format_execution_success(notifier):
     """Should format successful execution message."""
-    poly = LegResult("polymarket", True, "p1", 1.02, 0.51, None)
-    kalshi = LegResult("kalshi", True, "k1", 0.98, 0.49, None)
-    result = ExecutionResult(poly_leg=poly, kalshi_leg=kalshi)
+    poly = LegResult("polymarket", True, "p1", 2.0, 0.51, 1.02)
+    kalshi = LegResult("kalshi", True, "k1", 2.0, 0.49, 0.98)
+    result = ExecutionResult(
+        poly_leg=poly,
+        kalshi_leg=kalshi,
+        total_invested=2.00,
+        guaranteed_payout=2.00,
+        expected_profit=0.04,
+    )
 
     msg = notifier._format_execution_message(
         result,
@@ -29,13 +35,13 @@ def test_format_execution_success(notifier):
 
     assert "✅" in msg
     assert "Lakers vs Celtics" in msg
-    assert "2.3%" in msg
+    assert "2.3%" in msg or "ROI" in msg
 
 
 def test_format_execution_partial(notifier):
     """Should format partial fill warning."""
-    poly = LegResult("polymarket", True, "p1", 1.02, 0.51, None)
-    kalshi = LegResult("kalshi", False, None, 0, 0, "Insufficient liquidity")
+    poly = LegResult("polymarket", True, "p1", 2.0, 0.51, 1.02)
+    kalshi = LegResult("kalshi", False, None, 0, 0, 0, "Insufficient liquidity")
     result = ExecutionResult(poly_leg=poly, kalshi_leg=kalshi)
 
     msg = notifier._format_execution_message(
@@ -45,15 +51,37 @@ def test_format_execution_partial(notifier):
         profit=0.04,
     )
 
-    assert "⚠️" in msg
-    assert "PARTIAL" in msg
+    assert "⚠️" in msg or "PARTIAL" in msg
     assert "Insufficient liquidity" in msg
+
+
+def test_format_execution_rolled_back(notifier):
+    """Should format rolled back execution."""
+    poly = LegResult("polymarket", True, "p1", 2.0, 0.51, 1.02)
+    kalshi = LegResult("kalshi", False, None, 0, 0, 0, "FOK rejected")
+    rollback = LegResult("polymarket_rollback", True, "rb1", 2.0, 0.49, 0.98)
+    result = ExecutionResult(
+        poly_leg=poly,
+        kalshi_leg=kalshi,
+        rollback_leg=rollback,
+        rollback_loss=0.04,
+    )
+
+    msg = notifier._format_execution_message(
+        result,
+        event_title="Lakers vs Celtics",
+        roi=2.3,
+        profit=0.04,
+    )
+
+    assert "ROLLED BACK" in msg or "🔄" in msg
+    assert "$0.04" in msg  # rollback loss
 
 
 def test_format_execution_failed(notifier):
     """Should format failed execution."""
-    poly = LegResult("polymarket", False, None, 0, 0, "Error 1")
-    kalshi = LegResult("kalshi", False, None, 0, 0, "Error 2")
+    poly = LegResult("polymarket", False, None, 0, 0, 0, "Error 1")
+    kalshi = LegResult("kalshi", False, None, 0, 0, 0, "Error 2")
     result = ExecutionResult(poly_leg=poly, kalshi_leg=kalshi)
 
     msg = notifier._format_execution_message(

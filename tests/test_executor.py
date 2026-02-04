@@ -40,6 +40,8 @@ def sample_opportunity():
         details={
             "poly_token_id": "token_123",
             "kalshi_ticker": "KXNBA-123",
+            "poly_side": "BUY",
+            "kalshi_side": "no",
         },
     )
 
@@ -51,6 +53,9 @@ async def test_executor_skips_when_disabled(mock_components, sample_opportunity)
     mock_components["risk_manager"].check_opportunity.return_value = MagicMock(
         passed=False, reason="Kill switch is OFF"
     )
+    # Must set balance returns so logger can format them
+    mock_components["poly_connector"].get_balance.return_value = 10.0
+    mock_components["kalshi_connector"].get_balance.return_value = 10.0
 
     executor = Executor(**mock_components)
     result = await executor.try_execute(sample_opportunity)
@@ -86,8 +91,9 @@ async def test_executor_executes_valid_opportunity(mock_components, sample_oppor
     mock_components["poly_connector"].get_balance.return_value = 10.0
     mock_components["kalshi_connector"].get_balance.return_value = 10.0
 
-    poly_leg = LegResult("polymarket", True, "p1", 1.02, 0.51, None)
-    kalshi_leg = LegResult("kalshi", True, "k1", 0.98, 0.49, None)
+    # LegResult(platform, success, order_id, filled_shares, filled_price, filled_cost)
+    poly_leg = LegResult("polymarket", True, "p1", 2.0, 0.51, 1.02)
+    kalshi_leg = LegResult("kalshi", True, "k1", 2.0, 0.49, 0.98)
     mock_components["order_placer"].execute.return_value = ExecutionResult(
         poly_leg=poly_leg, kalshi_leg=kalshi_leg
     )

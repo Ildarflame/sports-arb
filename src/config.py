@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     executor_max_roi: float = 50.0
     executor_max_daily_trades: int = 50
     executor_max_daily_loss: float = 5.0
+    executor_min_platform_balance: float = 1.0
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -97,16 +97,22 @@ class TelegramNotifier:
     ) -> str:
         """Format execution result as Telegram message."""
         if result.status == ExecutionStatus.SUCCESS:
-            header = "✅ <b>EXECUTED</b> — Successful arbitrage"
+            header = "✅ <b>EXECUTED</b> — Arbitrage locked in!"
             status_details = ""
+        elif result.status == ExecutionStatus.ROLLED_BACK:
+            header = "🔄 <b>ROLLED BACK</b> — Partial fill recovered"
+            status_details = f"\n\n🔄 Rollback spread loss: ${result.rollback_loss:.2f}"
+        elif result.status == ExecutionStatus.ROLLBACK_FAILED:
+            header = "🚨 <b>ROLLBACK FAILED</b> — Manual action required!"
+            status_details = f"\n\n🚨 Rollback error: {result.rollback_leg.error if result.rollback_leg else 'Unknown'}"
         elif result.status == ExecutionStatus.PARTIAL:
             header = "⚠️ <b>PARTIAL FILL</b> — Attention required!"
             failed_leg = result.kalshi_leg if not result.kalshi_leg.success else result.poly_leg
-            status_details = f"\n🔴 {failed_leg.platform}: {failed_leg.error}"
+            status_details = f"\n\n🔴 {failed_leg.platform}: {failed_leg.error}"
         else:
             header = "❌ <b>FAILED</b> — Both legs failed"
             status_details = (
-                f"\nPoly: {result.poly_leg.error}"
+                f"\n\nPoly: {result.poly_leg.error}"
                 f"\nKalshi: {result.kalshi_leg.error}"
             )
 
@@ -114,24 +120,40 @@ class TelegramNotifier:
             f"{header}\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🏀 {event_title}\n"
-            f"📈 ROI: {roi:.1f}% (${profit:.2f} profit)\n"
         )
 
+        # Show positions
+        msg += "\n📊 <b>Positions:</b>"
         if result.poly_leg.success:
-            msg += f"\nPoly: ✅ ${result.poly_leg.filled_amount:.2f} @ {result.poly_leg.filled_price:.2f}"
+            msg += (
+                f"\nPoly: ✅ {result.poly_leg.filled_shares:.2f} shares "
+                f"× ${result.poly_leg.filled_price:.2f} = ${result.poly_leg.filled_cost:.2f}"
+            )
         else:
             msg += f"\nPoly: ❌ {result.poly_leg.error or 'Failed'}"
 
         if result.kalshi_leg.success:
-            msg += f"\nKalshi: ✅ ${result.kalshi_leg.filled_amount:.2f} @ {result.kalshi_leg.filled_price:.2f}"
+            msg += (
+                f"\nKalshi: ✅ {int(result.kalshi_leg.filled_shares)} contracts "
+                f"× ${result.kalshi_leg.filled_price:.2f} = ${result.kalshi_leg.filled_cost:.2f}"
+            )
         else:
             msg += f"\nKalshi: ❌ {result.kalshi_leg.error or 'Failed'}"
+
+        # Show payout for successful arbs
+        if result.status == ExecutionStatus.SUCCESS:
+            msg += (
+                f"\n\n💰 <b>Payout:</b>"
+                f"\nTotal invested: ${result.total_invested:.2f}"
+                f"\nGuaranteed payout: ${result.guaranteed_payout:.2f}"
+                f"\n📈 Profit: ${result.expected_profit:.2f} ({roi:.1f}% ROI)"
+            )
 
         if status_details:
             msg += status_details
 
         if poly_balance > 0 or kalshi_balance > 0:
-            msg += f"\n\n💰 Balances: Poly ${poly_balance:.2f} | Kalshi ${kalshi_balance:.2f}"
+            msg += f"\n\n💳 Balances: Poly ${poly_balance:.2f} | Kalshi ${kalshi_balance:.2f}"
 
         return msg
 

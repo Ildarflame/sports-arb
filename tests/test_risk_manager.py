@@ -44,6 +44,8 @@ def sample_opportunity():
             "poly_token_id": "test_token_123",
             "kalshi_ticker": "KXTEST-123",
             "arb_type": "yes_no",
+            "poly_side": "BUY",
+            "kalshi_side": "no",
         },
     )
 

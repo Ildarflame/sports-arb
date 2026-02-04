@@ -29,6 +29,8 @@ def sample_opportunity():
             "kalshi_ticker": "KXNBA-123",
             "poly_url": "https://polymarket.com/...",
             "kalshi_url": "https://kalshi.com/...",
+            "poly_side": "BUY",
+            "kalshi_side": "no",
         },
     )
 
@@ -59,7 +61,7 @@ async def test_execute_both_success(sample_opportunity):
 
 @pytest.mark.asyncio
 async def test_execute_poly_fails(sample_opportunity):
-    """Should return PARTIAL when Poly fails."""
+    """Should return ROLLED_BACK when Poly fails and Kalshi is rolled back."""
     mock_poly = AsyncMock()
     mock_poly.place_order.side_effect = Exception("Insufficient balance")
 
@@ -72,14 +74,17 @@ async def test_execute_poly_fails(sample_opportunity):
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     result = await placer.execute(sample_opportunity, bet_size=2.0)
 
-    assert result.status == ExecutionStatus.PARTIAL
+    # With auto-rollback, partial fills get rolled back
+    assert result.status == ExecutionStatus.ROLLED_BACK
     assert not result.poly_leg.success
     assert result.kalshi_leg.success
+    assert result.rollback_leg is not None
+    assert result.rollback_leg.success
 
 
 @pytest.mark.asyncio
 async def test_execute_kalshi_fails(sample_opportunity):
-    """Should return PARTIAL when Kalshi fails."""
+    """Should return ROLLED_BACK when Kalshi fails and Poly is rolled back."""
     mock_poly = AsyncMock()
     mock_poly.place_order.return_value = {
         "success": True,
@@ -92,9 +97,12 @@ async def test_execute_kalshi_fails(sample_opportunity):
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     result = await placer.execute(sample_opportunity, bet_size=2.0)
 
-    assert result.status == ExecutionStatus.PARTIAL
+    # With auto-rollback, partial fills get rolled back
+    assert result.status == ExecutionStatus.ROLLED_BACK
     assert result.poly_leg.success
     assert not result.kalshi_leg.success
+    assert result.rollback_leg is not None
+    assert result.rollback_leg.success
 
 
 @pytest.mark.asyncio
@@ -115,16 +123,19 @@ async def test_execute_both_fail(sample_opportunity):
 
 
 def test_calculate_leg_sizes():
-    """Should calculate proportional leg sizes."""
+    """Should calculate proportional leg sizes for equal contracts."""
     placer = OrderPlacer(poly_connector=MagicMock(), kalshi_connector=MagicMock())
 
+    # For kalshi_side="no", kalshi_cost = 1 - kalshi_yes_price
     poly_size, kalshi_size = placer._calculate_leg_sizes(
         bet_size=2.0,
         poly_price=0.51,
-        kalshi_price=0.48,
+        kalshi_yes_price=0.52,  # Kalshi YES price
+        kalshi_side="no",       # We buy NO, so cost = 1 - 0.52 = 0.48
     )
 
     # Total should equal bet_size
     assert abs((poly_size + kalshi_size) - 2.0) < 0.01
-    # Sizes should be proportional to prices
+    # With equal contracts strategy: sizes proportional to per-contract cost
+    # Poly cost per contract: 0.51, Kalshi NO cost: 0.48
     assert poly_size > kalshi_size  # Higher price = more dollars allocated

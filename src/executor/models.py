@@ -9,9 +9,11 @@ from enum import Enum
 
 class ExecutionStatus(Enum):
     """Status of arbitrage execution."""
-    SUCCESS = "success"      # Both legs filled
-    PARTIAL = "partial"      # One leg filled, one failed
-    FAILED = "failed"        # Both legs failed
+    SUCCESS = "success"           # Both legs filled
+    PARTIAL = "partial"           # One leg filled, one failed (no rollback)
+    ROLLED_BACK = "rolled_back"   # One leg filled, rolled back successfully
+    ROLLBACK_FAILED = "rollback_failed"  # Rollback attempted but failed
+    FAILED = "failed"             # Both legs failed
 
 
 @dataclass
@@ -20,9 +22,10 @@ class LegResult:
     platform: str           # "polymarket" or "kalshi"
     success: bool
     order_id: str | None
-    filled_amount: float    # Dollar amount filled
+    filled_shares: float    # Number of shares/contracts filled
     filled_price: float     # Average fill price
-    error: str | None
+    filled_cost: float      # Total dollars spent (shares × price)
+    error: str | None = None
 
 
 @dataclass
@@ -32,12 +35,27 @@ class ExecutionResult:
     kalshi_leg: LegResult
     executed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    # Rollback info (filled if partial fill occurred)
+    rollback_leg: LegResult | None = None
+    rollback_loss: float = 0.0  # Spread loss from rollback
+
+    # Payout calculation (filled on success)
+    total_invested: float = 0.0
+    guaranteed_payout: float = 0.0
+    expected_profit: float = 0.0
+
     @property
     def status(self) -> ExecutionStatus:
         """Determine execution status from leg results."""
         if self.poly_leg.success and self.kalshi_leg.success:
             return ExecutionStatus.SUCCESS
         elif self.poly_leg.success or self.kalshi_leg.success:
+            # One succeeded - check if rollback happened
+            if self.rollback_leg is not None:
+                if self.rollback_leg.success:
+                    return ExecutionStatus.ROLLED_BACK
+                else:
+                    return ExecutionStatus.ROLLBACK_FAILED
             return ExecutionStatus.PARTIAL
         else:
             return ExecutionStatus.FAILED
