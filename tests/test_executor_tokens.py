@@ -101,7 +101,7 @@ def test_poly_token_helper_safe_access():
     """Test that _get_poly_token handles edge cases safely."""
     from src.engine.arbitrage import _get_poly_token
 
-    # Normal case - both tokens present
+    # Normal case - both tokens present (neg-risk market, no outcome_index)
     raw_data = {"clob_token_ids": ["token_a", "token_b"]}
     assert _get_poly_token(raw_data, 0) == "token_a"
     assert _get_poly_token(raw_data, 1) == "token_b"
@@ -120,3 +120,21 @@ def test_poly_token_helper_safe_access():
     raw_data = {}
     assert _get_poly_token(raw_data, 0) is None
     assert _get_poly_token(raw_data, 1) is None
+
+
+def test_poly_token_helper_with_outcome_index():
+    """Test that _get_poly_token correctly maps tokens for 2-way markets."""
+    from src.engine.arbitrage import _get_poly_token
+
+    # 2-way market where this is team_a's market (outcome_index=0)
+    # tokens[0] = team_a, tokens[1] = team_b
+    raw_data = {"clob_token_ids": ["token_spirit", "token_xtreme"], "outcome_index": 0}
+    assert _get_poly_token(raw_data, 0) == "token_spirit"  # team_a
+    assert _get_poly_token(raw_data, 1) == "token_xtreme"  # team_b
+
+    # 2-way market where this is team_b's market (outcome_index=1)
+    # This market: team_a="Xtreme", team_b="Spirit"
+    # tokens[1] = team_a (Xtreme), tokens[0] = team_b (Spirit)
+    raw_data = {"clob_token_ids": ["token_spirit", "token_xtreme"], "outcome_index": 1}
+    assert _get_poly_token(raw_data, 0) == "token_xtreme"  # team_a (Xtreme)
+    assert _get_poly_token(raw_data, 1) == "token_spirit"  # team_b (Spirit)

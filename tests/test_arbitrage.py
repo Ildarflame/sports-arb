@@ -13,6 +13,7 @@ def _make_event(poly_yes: float, poly_no: float, kalshi_yes: float, kalshi_no: f
         team_a="A",
         team_b="B",
         price=MarketPrice(yes_price=poly_yes, no_price=poly_no, volume=5000),
+        raw_data={"clob_token_ids": ["token_team_a", "token_team_b"]},
     )
     km = Market(
         platform=Platform.KALSHI,
@@ -85,6 +86,7 @@ def _make_event_with_sport(
         team_b="Team B",
         sport=sport,
         price=MarketPrice(yes_price=poly_yes, no_price=poly_no, volume=5000),
+        raw_data={"clob_token_ids": ["token_team_a", "token_team_b"]},
     )
     km = Market(
         platform=Platform.KALSHI,

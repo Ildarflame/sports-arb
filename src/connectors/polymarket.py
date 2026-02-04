@@ -554,7 +554,8 @@ class PolymarketConnector(BaseConnector):
                         except (ValueError, TypeError):
                             pass
 
-                    team_token = [tokens[i]] if i < len(tokens) else tokens
+                    # Store ALL tokens so arbitrage calculator can access both teams' tokens
+                    # outcome_index tells which token index corresponds to this market's team_a
                     markets.append(Market(
                         platform=Platform.POLYMARKET,
                         market_id=f"{market_id_base}_{i}",
@@ -572,12 +573,12 @@ class PolymarketConnector(BaseConnector):
                         url=f"https://polymarket.com/event/{slug}/{market_slug}" if market_slug else f"https://polymarket.com/event/{slug}",
                         price=price,
                         raw_data={
-                            "clob_token_ids": team_token,
+                            "clob_token_ids": tokens,  # Store ALL tokens for both teams
                             "condition_id": m.get("conditionId", ""),
                             "slug": slug,
                             "event_title": event_title,
                             "outcomes": outcomes,
-                            "outcome_index": i,
+                            "outcome_index": i,  # This market's team_a is at tokens[i]
                             "sports_market_type": sports_type,
                             "market_subtype": market_subtype,
                             "neg_risk": False,

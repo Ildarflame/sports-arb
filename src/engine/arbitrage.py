@@ -29,8 +29,27 @@ def _invert_price(p: MarketPrice) -> MarketPrice:
 
 
 def _get_poly_token(raw_data: dict, index: int) -> str | None:
-    """Safely get Polymarket token ID by index (0=team_a, 1=team_b)."""
+    """Safely get Polymarket token ID by index (0=team_a, 1=team_b).
+
+    For 2-way markets with outcome_index, maps the requested index
+    to the correct token based on which team this market represents.
+    - index 0 = team_a's token
+    - index 1 = team_b's token
+    """
     tokens = raw_data.get("clob_token_ids", [])
+    if not tokens:
+        return None
+
+    # For 2-way markets, outcome_index tells us which token is team_a's
+    outcome_index = raw_data.get("outcome_index")
+    if outcome_index is not None and len(tokens) == 2:
+        # Map requested index to actual token index
+        # index=0 (team_a) → tokens[outcome_index]
+        # index=1 (team_b) → tokens[1-outcome_index]
+        actual_index = outcome_index if index == 0 else (1 - outcome_index)
+        return tokens[actual_index] if len(tokens) > actual_index else None
+
+    # For neg-risk markets or single-token markets, use index directly
     return tokens[index] if len(tokens) > index else None
 
 
@@ -291,6 +310,9 @@ def calculate_arbitrage(
     # Direction 2: Buy YES on Kalshi, buy NO on Polymarket
     # kp.yes (after inversion if swapped) = poly_team_a
     # pp.no = poly_team_b
+    # Check if we have the required token for Direction 2 (team_b token)
+    poly_token_d2 = _get_poly_token(poly_market.raw_data, 1)
+
     midpoint_cost_2 = kp.yes_price + pp.no_price
     exec_cost_2 = kalshi_yes_exec + poly_no_exec
     cost_2 = exec_cost_2
@@ -307,7 +329,8 @@ def calculate_arbitrage(
         d2_kalshi_team = kalshi_market.team_a
         d2_kalshi_side = "YES"
 
-    if cost_2 < 1.0:
+    # Skip Direction 2 if we don't have the required Poly token (team_b)
+    if cost_2 < 1.0 and poly_token_d2 is not None:
         gross_profit = 1.0 - cost_2
         fee_kalshi = kalshi_yes_exec * FEES[Platform.KALSHI]
         fee_poly = poly_no_exec * FEES[Platform.POLYMARKET]
@@ -359,7 +382,7 @@ def calculate_arbitrage(
                     "market_subtype": market_subtype,
                     "market_type": market_type,
                     # Trading identifiers for executor
-                    "poly_token_id": _get_poly_token(poly_market.raw_data, 1),  # team_b token
+                    "poly_token_id": poly_token_d2,  # team_b token (already validated above)
                     "poly_side": "BUY",
                     "kalshi_ticker": kalshi_market.market_id,
                     "kalshi_side": "yes" if not event.teams_swapped else "no",
@@ -477,8 +500,11 @@ def calculate_arbitrage(
         # Poly NO = poly_team_b wins, Kalshi original NO = kalshi_team_b wins
         # Since poly_team_a = kalshi_team_b (swapped), poly_team_b = kalshi_team_a
         # So: poly_team_b + kalshi_team_b = kalshi_team_a + kalshi_team_b = all outcomes
+        # Check if we have the required token for Direction 4 (team_b token)
+        poly_token_d4 = _get_poly_token(poly_market.raw_data, 1)
         cross_cost_4 = poly_no_exec + _exec_buy_price(kp_original, "no")
-        if cross_cost_4 < 1.0:
+        # Skip Direction 4 if we don't have the required Poly token (team_b)
+        if cross_cost_4 < 1.0 and poly_token_d4 is not None:
             gross_profit = 1.0 - cross_cost_4
             kalshi_orig_no_exec = _exec_buy_price(kp_original, "no")
             fee_poly = poly_no_exec * FEES[Platform.POLYMARKET]
@@ -536,7 +562,7 @@ def calculate_arbitrage(
                         "market_subtype": market_subtype,
                         "market_type": market_type,
                         # Trading identifiers for executor
-                        "poly_token_id": _get_poly_token(poly_market.raw_data, 1),  # team_b token
+                        "poly_token_id": poly_token_d4,  # team_b token (already validated above)
                         "poly_side": "BUY",
                         "kalshi_ticker": kalshi_market.market_id,
                         "kalshi_side": "no",
