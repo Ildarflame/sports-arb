@@ -180,14 +180,20 @@ class OrderPlacer:
 
             # If status is 'delayed', poll for actual order status
             # The order was accepted but fill details aren't ready yet
+            poll_confirmed = False
             if success and status == "delayed" and order_id:
                 logger.info(f"Poly order delayed, polling status for {order_id}...")
                 for attempt in range(5):
                     await asyncio.sleep(0.5)  # Wait 500ms between polls
                     order_status = await self.poly.get_order(order_id)
+
+                    # Handle None or error response
+                    if order_status is None:
+                        logger.warning(f"Poll {attempt + 1}: get_order returned None")
+                        continue
                     if order_status.get("error"):
                         logger.warning(f"Failed to get order status: {order_status}")
-                        break
+                        continue
 
                     new_status = order_status.get("status", "")
                     logger.info(f"Poll {attempt + 1}: status={new_status}, order={order_status}")
@@ -196,13 +202,26 @@ class OrderPlacer:
                         # Order was filled!
                         result = order_status
                         status = "matched"
+                        poll_confirmed = True
                         break
                     elif new_status in ("CANCELLED", "KILLED"):
                         # Order was not filled
                         success = False
                         status = new_status.lower()
+                        poll_confirmed = True
                         break
                     # If still delayed/live, keep polling
+
+                # IMPORTANT: If polling didn't confirm status but API returned success=True,
+                # assume the order filled. Better to have duplicate position than to
+                # rollback a filled order and lose money.
+                if not poll_confirmed and success:
+                    logger.warning(
+                        f"Could not confirm order status after polling, assuming SUCCESS "
+                        f"since API returned success=True. Order may need manual verification."
+                    )
+                    # Estimate fill based on original request
+                    status = "assumed_matched"
 
             # Parse actual filled amounts from response
             # For market orders, matchedAmount/size_matched is in shares
@@ -217,11 +236,18 @@ class OrderPlacer:
                     trades = result.get("associate_trades", [])
                     if trades and len(trades) > 0:
                         filled_shares = float(trades[0].get("size", 0))
+
+                # If status is assumed_matched and we have no fill data, estimate from order params
+                if filled_shares == 0 and status == "assumed_matched":
+                    # dollar_amount / price = shares
+                    filled_shares = dollar_amount / price if price > 0 else 0
+                    logger.info(f"Estimated fill: {filled_shares:.2f} shares from ${dollar_amount}@{price}")
+
             avg_price = float(result.get("avgPrice") or result.get("price") or price) if success else 0
             filled_cost = filled_shares * avg_price if success else 0
 
-            # For FOK orders: if matchedAmount=0 AND status isn't 'delayed', order was KILLED
-            if success and filled_shares == 0 and status != "delayed":
+            # For FOK orders: if matchedAmount=0 AND status isn't delayed/assumed, order was KILLED
+            if success and filled_shares == 0 and status not in ("delayed", "assumed_matched"):
                 logger.warning(
                     f"Poly FOK order returned success but matchedAmount=0 - treating as FAILED. "
                     f"Response: {result}"
