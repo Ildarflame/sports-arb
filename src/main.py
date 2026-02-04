@@ -589,6 +589,27 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                     sport_timings[sport_name] = round(duration, 2)
 
                     for event, opp in arb_results:
+                        # Update existing active opportunities with new ROI (even if dropped)
+                        # This ensures dashboard shows current ROI, not stale values
+                        arb_key = (
+                            opp.team_a,
+                            opp.platform_buy_yes.value,
+                            opp.platform_buy_no.value,
+                        )
+                        existing = await db.find_active_by_key(*arb_key)
+                        if existing and opp.roi_after_fees < settings.min_arb_percent:
+                            # ROI dropped below threshold — update DB with real ROI before deactivating
+                            _pm = event.markets.get(Platform.POLYMARKET)
+                            _km = event.markets.get(Platform.KALSHI)
+                            _sport = (_pm.sport if _pm else "") or (_km.sport if _km else "")
+                            await db.save_opportunity(opp, sport=_sport)
+                            logger.info(
+                                f"ROI DROPPED: {opp.event_title} now {opp.roi_after_fees:.2f}% "
+                                f"(below {settings.min_arb_percent}% threshold)"
+                            )
+                            # Don't add to current_arb_keys — will be deactivated
+                            continue
+
                         if not (opp.roi_after_fees >= settings.min_arb_percent):
                             continue
                         if opp.roi_after_fees > settings.max_arb_percent:
@@ -606,11 +627,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             continue
                         seen_game_keys.add(game_key)
 
-                        arb_key = (
-                            opp.team_a,
-                            opp.platform_buy_yes.value,
-                            opp.platform_buy_no.value,
-                        )
+                        # arb_key already computed above
                         current_arb_keys.add(arb_key)
 
                         _pm = event.markets.get(Platform.POLYMARKET)

@@ -691,7 +691,15 @@ def match_events(
         for k_key, k_list in kalshi_groups.items():
             # Match if sport matches (or either is unknown) AND market_type AND subtype match
             sport_ok = (pm_key[0] == "_any" or k_key[0] == "_any" or pm_key[0] == k_key[0])
-            type_ok = (pm_key[1] == "_any" or k_key[1] == "_any" or pm_key[1] == k_key[1])
+            # Market type matching: be STRICT when both have explicit types
+            # Don't allow futures to match games (prevents false NBA matches)
+            pm_type, k_type = pm_key[1], k_key[1]
+            if pm_type != "_any" and k_type != "_any":
+                # Both have explicit types → must match exactly
+                type_ok = (pm_type == k_type)
+            else:
+                # One or both unknown → allow match (backwards compat)
+                type_ok = True
             subtype_ok = (pm_key[2] == k_key[2])  # Exact subtype match required
             if sport_ok and type_ok and subtype_ok:
                 candidates.extend(k_list)
