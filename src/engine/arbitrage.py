@@ -28,6 +28,12 @@ def _invert_price(p: MarketPrice) -> MarketPrice:
     )
 
 
+def _get_poly_token(raw_data: dict, index: int) -> str | None:
+    """Safely get Polymarket token ID by index (0=team_a, 1=team_b)."""
+    tokens = raw_data.get("clob_token_ids", [])
+    return tokens[index] if len(tokens) > index else None
+
+
 def _parse_iso_datetime(dt_str: str | None) -> datetime | None:
     """Parse ISO datetime string to datetime object."""
     if not dt_str:
@@ -275,7 +281,7 @@ def calculate_arbitrage(
                     "market_subtype": market_subtype,
                     "market_type": market_type,
                     # Trading identifiers for executor
-                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                    "poly_token_id": _get_poly_token(poly_market.raw_data, 0),  # team_a token
                     "poly_side": "BUY",
                     "kalshi_ticker": kalshi_market.market_id,
                     "kalshi_side": "no" if not event.teams_swapped else "yes",
@@ -353,7 +359,7 @@ def calculate_arbitrage(
                     "market_subtype": market_subtype,
                     "market_type": market_type,
                     # Trading identifiers for executor
-                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None, None])[1],
+                    "poly_token_id": _get_poly_token(poly_market.raw_data, 1),  # team_b token
                     "poly_side": "BUY",
                     "kalshi_ticker": kalshi_market.market_id,
                     "kalshi_side": "yes" if not event.teams_swapped else "no",
@@ -460,7 +466,7 @@ def calculate_arbitrage(
                         "market_subtype": market_subtype,
                         "market_type": market_type,
                         # Trading identifiers for executor
-                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                        "poly_token_id": _get_poly_token(poly_market.raw_data, 0),  # team_a token
                         "poly_side": "BUY",
                         "kalshi_ticker": kalshi_market.market_id,
                         "kalshi_side": "yes",
@@ -530,7 +536,7 @@ def calculate_arbitrage(
                         "market_subtype": market_subtype,
                         "market_type": market_type,
                         # Trading identifiers for executor
-                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None, None])[1],
+                        "poly_token_id": _get_poly_token(poly_market.raw_data, 1),  # team_b token
                         "poly_side": "BUY",
                         "kalshi_ticker": kalshi_market.market_id,
                         "kalshi_side": "no",
