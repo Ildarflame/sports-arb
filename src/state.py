@@ -20,4 +20,10 @@ app_state: dict = {
     "last_tag_discovery": 0.0,   # monotonic timestamp of last tag discovery run
     # Per-sport scan timing
     "scan_metrics_by_sport": {},  # sport -> duration in seconds
+    # Executor components (set in main.py)
+    "executor_settings_manager": None,
+    "executor_ws_handler": None,
+    "trade_logger": None,
+    "poly_connector": None,
+    "kalshi_connector": None,
 }

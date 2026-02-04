@@ -812,6 +812,29 @@ async def run_app() -> None:
     await poly.connect()
     await kalshi.connect()
 
+    # Store connectors in app_state for dashboard access
+    app_state["poly_connector"] = poly
+    app_state["kalshi_connector"] = kalshi
+
+    # Init executor settings manager
+    from src.executor import ExecutorSettingsManager, ExecutorWSHandler, TradeLogger
+    settings_manager = ExecutorSettingsManager(db)
+    await settings_manager.load()
+    app_state["executor_settings_manager"] = settings_manager
+
+    # Init WebSocket handler for executor dashboard
+    ws_handler = ExecutorWSHandler(
+        settings_manager=settings_manager,
+        db=db,
+        poly_connector=poly,
+        kalshi_connector=kalshi,
+    )
+    app_state["executor_ws_handler"] = ws_handler
+
+    # Init trade logger
+    trade_logger = TradeLogger(db=db, ws_handler=ws_handler)
+    app_state["trade_logger"] = trade_logger
+
     # Init executor if enabled
     global _executor
     if settings.executor_enabled:
@@ -820,7 +843,18 @@ async def run_app() -> None:
                 Executor, RiskManager, OrderPlacer,
                 PositionManager, TelegramNotifier
             )
-            risk_manager = RiskManager()
+            # Use settings from SettingsManager
+            exec_settings = settings_manager.get()
+            risk_manager = RiskManager(
+                min_bet=exec_settings.min_bet,
+                max_bet=exec_settings.max_bet,
+                min_roi=exec_settings.min_roi,
+                max_roi=exec_settings.max_roi,
+                max_daily_trades=exec_settings.max_daily_trades,
+                max_daily_loss=exec_settings.max_daily_loss,
+            )
+            # Set executor enabled state from DB settings
+            risk_manager.enabled = exec_settings.enabled
             order_placer = OrderPlacer(poly, kalshi)
             position_manager = PositionManager()  # Uses settings.db_path automatically
             await position_manager.connect()
@@ -845,7 +879,9 @@ async def run_app() -> None:
 
     # Setup web routes (deferred to avoid circular import)
     from src.web.app import setup_routes
+    from src.web.routes import set_executor_ws_handler
     setup_routes()
+    set_executor_ws_handler(ws_handler)
 
     # Start web server
     config = uvicorn.Config(

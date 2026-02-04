@@ -43,13 +43,23 @@
 {# Age from found_at #}
 {% set found = opp.found_at if opp.found_at is string else '' %}
 
-<details class="arb-card {{ 'suspicious' if is_suspicious else '' }}">
+{% set conf = d.get('confidence', 'low') %}
+{% set conf_class = 'conf-' ~ conf %}
+<details class="arb-card {{ conf_class }} {{ 'suspicious' if is_suspicious else '' }}">
     <summary>
         <span class="dot {{ 'dot-exec' if is_exec else 'dot-mid' }}" title="{{ 'Executable bid/ask prices' if is_exec else 'Midpoint estimate' }}"></span>
         <span class="arb-event">{{ opp.team_a }} vs {{ opp.team_b }}</span>
         <span class="arb-strategy">{{ d.get('direction', 'YES@' ~ buy_yes_plat ~ ' + NO@' ~ buy_no_plat) }}</span>
         <span class="arb-cost">{{ "%.1f"|format(total * 100) }}c</span>
-        <span class="arb-roi">+{{ "%.2f"|format(roi) }}%</span>
+        {% if roi < 1 %}
+            <span class="arb-roi roi-gray">+{{ "%.2f"|format(roi) }}%</span>
+        {% elif roi < 3 %}
+            <span class="arb-roi roi-green">+{{ "%.2f"|format(roi) }}%</span>
+        {% elif roi < 5 %}
+            <span class="arb-roi roi-bright">+{{ "%.2f"|format(roi) }}%</span>
+        {% else %}
+            <span class="arb-roi roi-gold">+{{ "%.2f"|format(roi) }}%</span>
+        {% endif %}
         <span class="arb-meta">
             {% set conf = d.get('confidence', 'low') %}
             {% set poly_exec_str = 'bid/ask' if d.get('has_poly_exec') else 'mid' %}

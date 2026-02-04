@@ -38,6 +38,53 @@ CREATE TABLE IF NOT EXISTS roi_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_roi_snap ON roi_snapshots(opp_id, snapped_at);
+
+-- Executor settings (single row)
+CREATE TABLE IF NOT EXISTS executor_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    enabled BOOLEAN DEFAULT FALSE,
+    min_bet REAL DEFAULT 5.0,
+    max_bet REAL DEFAULT 10.0,
+    min_roi REAL DEFAULT 1.0,
+    max_roi REAL DEFAULT 50.0,
+    max_daily_trades INTEGER DEFAULT 50,
+    max_daily_loss REAL DEFAULT 5.0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK (id = 1)
+);
+
+-- Trade history
+CREATE TABLE IF NOT EXISTS executor_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    event_title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    bet_size REAL NOT NULL,
+    pnl REAL DEFAULT 0,
+    roi REAL,
+    poly_order_id TEXT,
+    kalshi_order_id TEXT,
+    details JSON
+);
+
+-- Open positions
+CREATE TABLE IF NOT EXISTS executor_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key TEXT UNIQUE NOT NULL,
+    event_title TEXT NOT NULL,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    poly_side TEXT,
+    poly_price REAL,
+    poly_contracts INTEGER,
+    kalshi_side TEXT,
+    kalshi_price REAL,
+    kalshi_contracts INTEGER,
+    status TEXT DEFAULT 'open'
+);
+
+-- Indexes for executor tables
+CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON executor_trades(timestamp);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON executor_positions(status);
 """
 
 # Migration: add sport column if missing (for existing databases)
@@ -77,6 +124,8 @@ class Database:
             )
         # Backfill sport column for rows that have sport=''
         await self._backfill_sport()
+        # Initialize executor_settings if empty
+        await self._init_executor_settings()
         await self._db.commit()
 
     async def _backfill_sport(self) -> None:
@@ -140,6 +189,18 @@ class Database:
 
         if updated:
             _log.info(f"DB backfill: updated sport for {updated}/{len(rows)} opportunities")
+
+    async def _init_executor_settings(self) -> None:
+        """Initialize executor_settings with defaults if empty."""
+        cursor = await self._db.execute("SELECT COUNT(*) FROM executor_settings")
+        count = (await cursor.fetchone())[0]
+        if count == 0:
+            await self._db.execute(
+                """INSERT INTO executor_settings (id, enabled, min_bet, max_bet, min_roi, max_roi, max_daily_trades, max_daily_loss)
+                   VALUES (1, FALSE, 5.0, 10.0, 1.0, 50.0, 50, 5.0)"""
+            )
+            import logging
+            logging.getLogger(__name__).info("Initialized executor_settings with defaults")
 
     async def close(self) -> None:
         if self._db:
@@ -519,6 +580,114 @@ class Database:
             (f"-{days} days",),
         )
         return cursor.rowcount
+
+    # --- Executor Settings ---
+
+    async def get_executor_settings(self) -> dict:
+        """Get executor settings."""
+        cursor = await self._db.execute("SELECT * FROM executor_settings WHERE id = 1")
+        row = await cursor.fetchone()
+        return dict(row) if row else {}
+
+    async def update_executor_settings(self, **kwargs) -> None:
+        """Update executor settings. Only updates provided fields."""
+        if not kwargs:
+            return
+        allowed = {"enabled", "min_bet", "max_bet", "min_roi", "max_roi", "max_daily_trades", "max_daily_loss"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [datetime.utcnow().isoformat()]
+        await self._db.execute(
+            f"UPDATE executor_settings SET {set_clause}, updated_at = ? WHERE id = 1",
+            values,
+        )
+        await self._db.commit()
+
+    # --- Executor Trades ---
+
+    async def save_executor_trade(
+        self,
+        event_title: str,
+        status: str,
+        bet_size: float,
+        pnl: float = 0,
+        roi: float | None = None,
+        poly_order_id: str | None = None,
+        kalshi_order_id: str | None = None,
+        details: dict | None = None,
+    ) -> int:
+        """Save a trade to executor_trades. Returns trade id."""
+        cursor = await self._db.execute(
+            """INSERT INTO executor_trades (event_title, status, bet_size, pnl, roi, poly_order_id, kalshi_order_id, details)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (event_title, status, bet_size, pnl, roi, poly_order_id, kalshi_order_id, json.dumps(details or {})),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_executor_trades(self, limit: int = 50) -> list[dict]:
+        """Get recent executor trades."""
+        cursor = await self._db.execute(
+            "SELECT * FROM executor_trades ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_daily_executor_stats(self) -> dict:
+        """Get today's executor stats."""
+        cursor = await self._db.execute(
+            """SELECT
+                COUNT(*) as trades,
+                SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN status = 'ROLLED_BACK' THEN 1 ELSE 0 END) as rolled_back,
+                SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
+                COALESCE(SUM(pnl), 0) as pnl
+               FROM executor_trades
+               WHERE date(timestamp) = date('now')"""
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else {"trades": 0, "successful": 0, "rolled_back": 0, "failed": 0, "pnl": 0}
+
+    # --- Executor Positions ---
+
+    async def save_executor_position(
+        self,
+        event_key: str,
+        event_title: str,
+        poly_side: str,
+        poly_price: float,
+        poly_contracts: int,
+        kalshi_side: str,
+        kalshi_price: float,
+        kalshi_contracts: int,
+    ) -> int:
+        """Save an open position. Returns position id."""
+        cursor = await self._db.execute(
+            """INSERT OR REPLACE INTO executor_positions
+               (event_key, event_title, poly_side, poly_price, poly_contracts, kalshi_side, kalshi_price, kalshi_contracts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (event_key, event_title, poly_side, poly_price, poly_contracts, kalshi_side, kalshi_price, kalshi_contracts),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_executor_positions(self, status: str = "open") -> list[dict]:
+        """Get executor positions by status."""
+        cursor = await self._db.execute(
+            "SELECT * FROM executor_positions WHERE status = ? ORDER BY opened_at DESC",
+            (status,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def close_executor_position(self, event_key: str, status: str = "closed") -> None:
+        """Close a position by event_key."""
+        await self._db.execute(
+            "UPDATE executor_positions SET status = ? WHERE event_key = ?",
+            (status, event_key),
+        )
+        await self._db.commit()
 
 
 db = Database()

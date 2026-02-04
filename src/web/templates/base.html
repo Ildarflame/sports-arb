@@ -302,6 +302,38 @@
         /* Suspicious warning */
         .arb-card.suspicious { border-left: 3px solid var(--red); opacity: 0.7; }
         .arb-card.suspicious summary { color: var(--text-dim); }
+
+        /* Confidence borders */
+        .arb-card.conf-high { border-left: 4px solid var(--green); background: rgba(34, 197, 94, 0.03); }
+        .arb-card.conf-medium { border-left: 4px solid var(--yellow); background: rgba(234, 179, 8, 0.03); }
+        .arb-card.conf-low { border-left: 4px solid var(--red); background: rgba(239, 68, 68, 0.03); }
+
+        /* ROI color coding */
+        .roi-gray { color: var(--text-dim); }
+        .roi-green { color: var(--green); }
+        .roi-bright { color: #4ade80; font-weight: 700; }
+        .roi-gold { color: #fbbf24; font-weight: 700; }
+
+        /* Confidence filter buttons */
+        .conf-filters {
+            display: flex;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+        .conf-btn {
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--text-dim);
+            background: transparent;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .conf-btn:hover { border-color: var(--blue); color: var(--text); }
+        .conf-btn.active { background: var(--blue); color: white; border-color: var(--blue); }
         .suspicious-banner {
             padding: 0.3rem 0.6rem;
             font-size: 0.72rem;
@@ -342,6 +374,7 @@
                 <span>Updated: <span id="last-update">{{ last_update }}</span></span>
                 <a href="/analytics" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">Analytics</a>
                 <a href="/simulator" style="color: var(--blue); text-decoration: none; font-size: 0.8rem;">Simulator</a>
+                <a href="/executor" style="color: var(--green); text-decoration: none; font-size: 0.8rem; font-weight: 600;">Executor</a>
             </div>
         </header>
         {% block content %}{% endblock %}

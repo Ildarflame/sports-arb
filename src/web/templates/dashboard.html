@@ -43,10 +43,18 @@
 
 <div class="grid">
     <div class="card" id="alerts-panel"
-         hx-get="/partials/alerts"
+         hx-get="/partials/alerts?min_confidence={{ request.query_params.get('min_confidence', 'all') }}"
          hx-trigger="sse:update"
          hx-swap="innerHTML">
         <h2>Arbitrage Opportunities</h2>
+        <div class="conf-filters">
+            <a href="/?sport={{ current_sport }}&min_roi={{ current_min_roi }}&min_confidence=all"
+               class="conf-btn {{ 'active' if request.query_params.get('min_confidence', 'all') == 'all' else '' }}">All</a>
+            <a href="/?sport={{ current_sport }}&min_roi={{ current_min_roi }}&min_confidence=high"
+               class="conf-btn {{ 'active' if request.query_params.get('min_confidence') == 'high' else '' }}">HIGH only</a>
+            <a href="/?sport={{ current_sport }}&min_roi={{ current_min_roi }}&min_confidence=medium"
+               class="conf-btn {{ 'active' if request.query_params.get('min_confidence') == 'medium' else '' }}">MEDIUM+</a>
+        </div>
         {% include "partials/alerts.html" %}
     </div>
 

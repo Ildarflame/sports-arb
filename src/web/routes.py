@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -478,3 +478,70 @@ async def sse_stream(request: Request):
             _sse_subscribers.remove(queue)
 
     return EventSourceResponse(event_generator())
+
+
+# --- Executor Dashboard ---
+
+# Global executor components (initialized in main.py)
+_executor_ws_handler = None
+
+
+def set_executor_ws_handler(handler) -> None:
+    """Set the WebSocket handler from main.py initialization."""
+    global _executor_ws_handler
+    _executor_ws_handler = handler
+
+
+@router.get("/executor", response_class=HTMLResponse)
+async def executor_page(request: Request):
+    """Executor dashboard page."""
+    from src.state import app_state
+
+    # Get settings manager from app state
+    settings_manager = app_state.get("executor_settings_manager")
+    if settings_manager:
+        settings = settings_manager.get()
+    else:
+        # Fallback defaults
+        from src.executor import ExecutorSettings
+        settings = ExecutorSettings()
+
+    # Get balances
+    balances = {"poly": 0.0, "kalshi": 0.0}
+    poly_connector = app_state.get("poly_connector")
+    kalshi_connector = app_state.get("kalshi_connector")
+    try:
+        if poly_connector:
+            balances["poly"] = await poly_connector.get_balance()
+        if kalshi_connector:
+            balances["kalshi"] = await kalshi_connector.get_balance()
+    except Exception as e:
+        logger.warning(f"Failed to fetch balances for executor page: {e}")
+
+    # Get stats and positions
+    stats = await db.get_daily_executor_stats()
+    positions = await db.get_executor_positions(status="open")
+    trades = await db.get_executor_trades(limit=20)
+
+    return templates.TemplateResponse(
+        "executor.html",
+        {
+            "request": request,
+            "enabled": settings.enabled,
+            "settings": settings,
+            "balances": balances,
+            "stats": stats,
+            "positions": positions,
+            "trades": trades,
+        },
+    )
+
+
+@router.websocket("/ws/executor")
+async def executor_websocket(websocket: WebSocket):
+    """WebSocket endpoint for executor real-time updates."""
+    if _executor_ws_handler is None:
+        await websocket.close(code=1011, reason="Executor not initialized")
+        return
+
+    await _executor_ws_handler.handle_connection(websocket)

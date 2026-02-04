@@ -1,0 +1,524 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .executor-header {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+    .status-badge {
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+    }
+    .status-active { background: rgba(34,197,94,0.2); color: var(--green); border: 1px solid var(--green); }
+    .status-paused { background: rgba(239,68,68,0.2); color: var(--red); border: 1px solid var(--red); }
+    .toggle-btn {
+        padding: 0.6rem 1.5rem;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+    }
+    .toggle-btn.enable { background: var(--green); color: white; }
+    .toggle-btn.enable:hover { background: #16a34a; }
+    .toggle-btn.disable { background: var(--red); color: white; }
+    .toggle-btn.disable:hover { background: #dc2626; }
+    .last-update-info { color: var(--text-dim); font-size: 0.8rem; margin-left: auto; }
+
+    .executor-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    @media (max-width: 1000px) {
+        .executor-grid { grid-template-columns: 1fr; }
+    }
+
+    .settings-form label {
+        display: block;
+        margin-bottom: 0.8rem;
+    }
+    .settings-form .label-text {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--text-dim);
+        margin-bottom: 0.3rem;
+    }
+    .settings-form input {
+        width: 100%;
+        padding: 0.5rem;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font-family: inherit;
+        font-size: 0.85rem;
+    }
+    .settings-form input:focus {
+        outline: none;
+        border-color: var(--blue);
+    }
+    .save-btn {
+        width: 100%;
+        padding: 0.6rem;
+        border-radius: 4px;
+        border: none;
+        background: var(--blue);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 0.5rem;
+    }
+    .save-btn:hover { background: #2563eb; }
+    .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .balance-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border);
+    }
+    .balance-row:last-child { border-bottom: none; }
+    .balance-label { color: var(--text-dim); }
+    .balance-value { font-weight: 600; }
+    .balance-total { color: var(--green); font-size: 1.1rem; }
+
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.4rem 0;
+    }
+    .stat-label { color: var(--text-dim); font-size: 0.8rem; }
+    .stat-value { font-weight: 600; }
+    .stat-value.positive { color: var(--green); }
+    .stat-value.negative { color: var(--red); }
+
+    .position-card {
+        padding: 0.8rem;
+        background: var(--bg);
+        border-radius: 6px;
+        margin-bottom: 0.6rem;
+    }
+    .position-title { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.4rem; }
+    .position-details { font-size: 0.75rem; color: var(--text-dim); line-height: 1.6; }
+    .close-position-btn {
+        margin-top: 0.5rem;
+        padding: 0.3rem 0.8rem;
+        border-radius: 4px;
+        border: 1px solid var(--red);
+        background: transparent;
+        color: var(--red);
+        font-size: 0.7rem;
+        cursor: pointer;
+    }
+    .close-position-btn:hover { background: rgba(239,68,68,0.1); }
+
+    .trades-table {
+        width: 100%;
+        font-size: 0.8rem;
+    }
+    .trades-table th {
+        text-align: left;
+        padding: 0.5rem;
+        color: var(--text-dim);
+        font-weight: 500;
+        border-bottom: 1px solid var(--border);
+    }
+    .trades-table td {
+        padding: 0.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .trade-status {
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+    .trade-status.success { background: rgba(34,197,94,0.2); color: var(--green); }
+    .trade-status.failed { background: rgba(239,68,68,0.2); color: var(--red); }
+    .trade-status.rolled_back { background: rgba(234,179,8,0.2); color: var(--yellow); }
+    .trade-status.partial { background: rgba(59,130,246,0.2); color: var(--blue); }
+
+    .ws-status {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+    }
+    .ws-status.connected { background: var(--green); }
+    .ws-status.disconnected { background: var(--red); }
+</style>
+
+<div class="executor-header">
+    <div id="status-badge" class="status-badge {% if enabled %}status-active{% else %}status-paused{% endif %}">
+        {% if enabled %}ACTIVE{% else %}PAUSED{% endif %}
+    </div>
+    <button id="toggle-btn" class="toggle-btn {% if enabled %}disable{% else %}enable{% endif %}" onclick="toggleExecutor()">
+        {% if enabled %}Disable{% else %}Enable{% endif %}
+    </button>
+    <div class="last-update-info">
+        <span class="ws-status" id="ws-status"></span>
+        <span id="ws-status-text">Connecting...</span>
+    </div>
+</div>
+
+<div class="executor-grid">
+    <!-- Settings Panel -->
+    <div class="card">
+        <h2>Settings</h2>
+        <form id="settings-form" class="settings-form" onsubmit="saveSettings(event)">
+            <label>
+                <span class="label-text">Min Bet ($)</span>
+                <input type="number" id="min_bet" name="min_bet" step="0.01" value="{{ settings.min_bet }}">
+            </label>
+            <label>
+                <span class="label-text">Max Bet ($)</span>
+                <input type="number" id="max_bet" name="max_bet" step="0.01" value="{{ settings.max_bet }}">
+            </label>
+            <label>
+                <span class="label-text">Min ROI (%)</span>
+                <input type="number" id="min_roi" name="min_roi" step="0.1" value="{{ settings.min_roi }}">
+            </label>
+            <label>
+                <span class="label-text">Max ROI (%)</span>
+                <input type="number" id="max_roi" name="max_roi" step="0.1" value="{{ settings.max_roi }}">
+            </label>
+            <label>
+                <span class="label-text">Max Daily Trades</span>
+                <input type="number" id="max_daily_trades" name="max_daily_trades" value="{{ settings.max_daily_trades }}">
+            </label>
+            <label>
+                <span class="label-text">Max Daily Loss ($)</span>
+                <input type="number" id="max_daily_loss" name="max_daily_loss" step="0.01" value="{{ settings.max_daily_loss }}">
+            </label>
+            <button type="submit" class="save-btn" id="save-btn">Save Settings</button>
+        </form>
+    </div>
+
+    <!-- Balances & Stats -->
+    <div class="card">
+        <h2>Balances</h2>
+        <div class="balance-row">
+            <span class="balance-label">Polymarket</span>
+            <span class="balance-value" id="balance-poly">${{ "%.2f"|format(balances.poly) }}</span>
+        </div>
+        <div class="balance-row">
+            <span class="balance-label">Kalshi</span>
+            <span class="balance-value" id="balance-kalshi">${{ "%.2f"|format(balances.kalshi) }}</span>
+        </div>
+        <div class="balance-row">
+            <span class="balance-label">Total</span>
+            <span class="balance-value balance-total" id="balance-total">${{ "%.2f"|format(balances.poly + balances.kalshi) }}</span>
+        </div>
+
+        <h2 style="margin-top: 1.5rem;">Today's Stats</h2>
+        <div class="stat-row">
+            <span class="stat-label">Trades</span>
+            <span class="stat-value" id="stat-trades">{{ stats.trades }} / {{ settings.max_daily_trades }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">P&L</span>
+            <span class="stat-value {% if stats.pnl >= 0 %}positive{% else %}negative{% endif %}" id="stat-pnl">
+                {% if stats.pnl >= 0 %}+{% endif %}${{ "%.2f"|format(stats.pnl) }}
+            </span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Successful</span>
+            <span class="stat-value" id="stat-successful">{{ stats.successful }}</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Rolled Back</span>
+            <span class="stat-value" id="stat-rolled-back">{{ stats.rolled_back }}</span>
+        </div>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="card">
+        <h2>Open Positions (<span id="positions-count">{{ positions|length }}</span>)</h2>
+        <div id="positions-list">
+            {% if positions %}
+                {% for pos in positions %}
+                <div class="position-card" data-event-key="{{ pos.event_key }}">
+                    <div class="position-title">{{ pos.event_title }}</div>
+                    <div class="position-details">
+                        Poly {{ pos.poly_side }} @ {{ "%.2f"|format(pos.poly_price) }} ({{ pos.poly_contracts }} contracts)<br>
+                        Kalshi {{ pos.kalshi_side }} @ {{ "%.2f"|format(pos.kalshi_price) }} ({{ pos.kalshi_contracts }} contracts)
+                    </div>
+                    <button class="close-position-btn" onclick="closePosition('{{ pos.event_key }}')">Close Position</button>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state" style="padding: 1rem;">No open positions</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Trade Log -->
+<div class="card">
+    <h2>Recent Trades</h2>
+    <table class="trades-table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Status</th>
+                <th>Bet</th>
+                <th>P&L</th>
+                <th>ROI</th>
+            </tr>
+        </thead>
+        <tbody id="trades-tbody">
+            {% for trade in trades %}
+            <tr>
+                <td>{{ trade.timestamp[:19] if trade.timestamp else '' }}</td>
+                <td>{{ trade.event_title }}</td>
+                <td><span class="trade-status {{ trade.status|lower }}">{{ trade.status }}</span></td>
+                <td>${{ "%.2f"|format(trade.bet_size) }}</td>
+                <td class="{% if trade.pnl >= 0 %}positive{% else %}negative{% endif %}">
+                    {% if trade.pnl >= 0 %}+{% endif %}${{ "%.2f"|format(trade.pnl) }}
+                </td>
+                <td>{% if trade.roi %}{{ "%.1f"|format(trade.roi) }}%{% else %}-{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty-state">No trades yet</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+let ws;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${window.location.host}/ws/executor`);
+
+    ws.onopen = () => {
+        console.log('WebSocket connected');
+        reconnectAttempts = 0;
+        document.getElementById('ws-status').className = 'ws-status connected';
+        document.getElementById('ws-status-text').textContent = 'Connected';
+    };
+
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        document.getElementById('ws-status').className = 'ws-status disconnected';
+        document.getElementById('ws-status-text').textContent = 'Disconnected';
+
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            setTimeout(connectWebSocket, 2000 * reconnectAttempts);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        handleMessage(msg);
+    };
+}
+
+function handleMessage(msg) {
+    switch (msg.type) {
+        case 'init':
+            updateAll(msg.data);
+            break;
+        case 'balance_update':
+            updateBalances(msg.data);
+            break;
+        case 'trade_event':
+            addTradeToLog(msg.data);
+            break;
+        case 'position_opened':
+            addPosition(msg.data);
+            break;
+        case 'position_closed':
+            removePosition(msg.data.event_key);
+            break;
+        case 'settings_changed':
+            updateSettingsForm(msg.data);
+            break;
+        case 'status_changed':
+            updateStatus(msg.data.enabled);
+            break;
+        case 'error':
+            alert('Error: ' + msg.message);
+            break;
+    }
+}
+
+function updateAll(data) {
+    updateStatus(data.enabled);
+    updateSettingsForm(data.settings);
+    updateBalances(data.balances);
+    updateStats(data.stats);
+    // Positions and trades are rendered server-side on initial load
+}
+
+function updateStatus(enabled) {
+    const badge = document.getElementById('status-badge');
+    const btn = document.getElementById('toggle-btn');
+
+    if (enabled) {
+        badge.className = 'status-badge status-active';
+        badge.textContent = 'ACTIVE';
+        btn.className = 'toggle-btn disable';
+        btn.textContent = 'Disable';
+    } else {
+        badge.className = 'status-badge status-paused';
+        badge.textContent = 'PAUSED';
+        btn.className = 'toggle-btn enable';
+        btn.textContent = 'Enable';
+    }
+}
+
+function updateSettingsForm(settings) {
+    document.getElementById('min_bet').value = settings.min_bet;
+    document.getElementById('max_bet').value = settings.max_bet;
+    document.getElementById('min_roi').value = settings.min_roi;
+    document.getElementById('max_roi').value = settings.max_roi;
+    document.getElementById('max_daily_trades').value = settings.max_daily_trades;
+    document.getElementById('max_daily_loss').value = settings.max_daily_loss;
+}
+
+function updateBalances(balances) {
+    document.getElementById('balance-poly').textContent = '$' + balances.poly.toFixed(2);
+    document.getElementById('balance-kalshi').textContent = '$' + balances.kalshi.toFixed(2);
+    document.getElementById('balance-total').textContent = '$' + (balances.poly + balances.kalshi).toFixed(2);
+}
+
+function updateStats(stats) {
+    const maxTrades = document.getElementById('max_daily_trades').value || 50;
+    document.getElementById('stat-trades').textContent = stats.trades + ' / ' + maxTrades;
+
+    const pnlEl = document.getElementById('stat-pnl');
+    pnlEl.textContent = (stats.pnl >= 0 ? '+' : '') + '$' + stats.pnl.toFixed(2);
+    pnlEl.className = 'stat-value ' + (stats.pnl >= 0 ? 'positive' : 'negative');
+
+    document.getElementById('stat-successful').textContent = stats.successful;
+    document.getElementById('stat-rolled-back').textContent = stats.rolled_back;
+}
+
+function addTradeToLog(trade) {
+    const tbody = document.getElementById('trades-tbody');
+    const emptyRow = tbody.querySelector('.empty-state');
+    if (emptyRow) emptyRow.parentElement.remove();
+
+    const row = document.createElement('tr');
+    const time = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const pnlClass = trade.pnl >= 0 ? 'positive' : 'negative';
+    const pnlSign = trade.pnl >= 0 ? '+' : '';
+
+    row.innerHTML = `
+        <td>${time}</td>
+        <td>${trade.event}</td>
+        <td><span class="trade-status ${trade.status.toLowerCase()}">${trade.status}</span></td>
+        <td>$${trade.bet_size.toFixed(2)}</td>
+        <td class="${pnlClass}">${pnlSign}$${trade.pnl.toFixed(2)}</td>
+        <td>${trade.roi ? trade.roi.toFixed(1) + '%' : '-'}</td>
+    `;
+
+    tbody.insertBefore(row, tbody.firstChild);
+
+    // Keep only last 50 trades
+    while (tbody.children.length > 50) {
+        tbody.removeChild(tbody.lastChild);
+    }
+}
+
+function addPosition(pos) {
+    const list = document.getElementById('positions-list');
+    const emptyState = list.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+
+    const card = document.createElement('div');
+    card.className = 'position-card';
+    card.dataset.eventKey = pos.event_key;
+    card.innerHTML = `
+        <div class="position-title">${pos.event_title}</div>
+        <div class="position-details">
+            Poly ${pos.poly_side} @ ${pos.poly_price.toFixed(2)} (${pos.poly_contracts} contracts)<br>
+            Kalshi ${pos.kalshi_side} @ ${pos.kalshi_price.toFixed(2)} (${pos.kalshi_contracts} contracts)
+        </div>
+        <button class="close-position-btn" onclick="closePosition('${pos.event_key}')">Close Position</button>
+    `;
+
+    list.insertBefore(card, list.firstChild);
+    updatePositionCount();
+}
+
+function removePosition(eventKey) {
+    const card = document.querySelector(`.position-card[data-event-key="${eventKey}"]`);
+    if (card) card.remove();
+
+    const list = document.getElementById('positions-list');
+    if (!list.querySelector('.position-card')) {
+        list.innerHTML = '<div class="empty-state" style="padding: 1rem;">No open positions</div>';
+    }
+    updatePositionCount();
+}
+
+function updatePositionCount() {
+    const count = document.querySelectorAll('.position-card').length;
+    document.getElementById('positions-count').textContent = count;
+}
+
+function toggleExecutor() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: 'toggle_enabled' }));
+    }
+}
+
+function saveSettings(event) {
+    event.preventDefault();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const settings = {
+            min_bet: parseFloat(document.getElementById('min_bet').value),
+            max_bet: parseFloat(document.getElementById('max_bet').value),
+            min_roi: parseFloat(document.getElementById('min_roi').value),
+            max_roi: parseFloat(document.getElementById('max_roi').value),
+            max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
+            max_daily_loss: parseFloat(document.getElementById('max_daily_loss').value),
+        };
+        ws.send(JSON.stringify({ action: 'update_settings', settings }));
+
+        const btn = document.getElementById('save-btn');
+        btn.textContent = 'Saved!';
+        btn.disabled = true;
+        setTimeout(() => {
+            btn.textContent = 'Save Settings';
+            btn.disabled = false;
+        }, 1500);
+    }
+}
+
+function closePosition(eventKey) {
+    if (confirm('Close position for ' + eventKey + '?')) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ action: 'close_position', position_id: eventKey }));
+        }
+    }
+}
+
+// Connect on page load
+connectWebSocket();
+</script>
+{% endblock %}
