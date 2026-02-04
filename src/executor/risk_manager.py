@@ -104,12 +104,15 @@ class RiskManager:
         if event_key in self._open_positions:
             return RiskCheckResult(False, f"Already have open position on {opp.event_title} ({event_key})")
 
-        # 6. Confidence check for live arbs
-        if opp.details.get("is_live"):
-            if not opp.details.get("executable"):
-                return RiskCheckResult(False, "Live arb requires executable bid/ask prices")
-            if opp.details.get("confidence") != "high":
-                return RiskCheckResult(False, "Live arb requires high confidence")
+        # 6. Confidence check - require HIGH confidence for all arbs
+        # This ensures good liquidity and reliable prices
+        confidence = opp.details.get("confidence", "low")
+        if confidence != "high":
+            return RiskCheckResult(False, f"Requires high confidence (got {confidence})")
+
+        # 7. Executable bid/ask required
+        if not opp.details.get("executable"):
+            return RiskCheckResult(False, "Requires executable bid/ask prices")
 
         return RiskCheckResult(True, None)
 

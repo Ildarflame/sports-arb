@@ -53,7 +53,7 @@ async def test_execute_both_success(sample_opportunity):
 
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     # Use $3 bet to ensure both legs are >= $1 (with 0.51/0.49 split)
-    result = await placer.execute(sample_opportunity, bet_size=3.0)
+    result = await placer.execute(sample_opportunity, bet_size=5.0)
 
     assert result.status == ExecutionStatus.SUCCESS
     assert result.poly_leg.success
@@ -74,7 +74,7 @@ async def test_execute_poly_fails(sample_opportunity):
 
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     # Use $3 bet to ensure both legs are >= $1
-    result = await placer.execute(sample_opportunity, bet_size=3.0)
+    result = await placer.execute(sample_opportunity, bet_size=5.0)
 
     # With auto-rollback, partial fills get rolled back
     assert result.status == ExecutionStatus.ROLLED_BACK
@@ -98,7 +98,7 @@ async def test_execute_kalshi_fails(sample_opportunity):
 
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     # Use $3 bet to ensure both legs are >= $1
-    result = await placer.execute(sample_opportunity, bet_size=3.0)
+    result = await placer.execute(sample_opportunity, bet_size=5.0)
 
     # With auto-rollback, partial fills get rolled back
     assert result.status == ExecutionStatus.ROLLED_BACK
@@ -119,7 +119,7 @@ async def test_execute_both_fail(sample_opportunity):
 
     placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
     # Use $3 bet to ensure both legs are >= $1
-    result = await placer.execute(sample_opportunity, bet_size=3.0)
+    result = await placer.execute(sample_opportunity, bet_size=5.0)
 
     assert result.status == ExecutionStatus.FAILED
     assert not result.poly_leg.success
