@@ -119,12 +119,13 @@ class RiskManager:
             return RiskCheckResult(False, "Requires executable bid/ask prices")
 
         # 8. Liquidity check - ensure enough liquidity for minimum bet
+        # Use 90% tolerance to avoid rejecting borderline cases due to rounding
         liquidity = opp.details.get("liquidity", {})
         max_liq = liquidity.get("max_at_best", 0) if liquidity else 0
-        if max_liq < self.min_bet:
+        if max_liq < self.min_bet * 0.9:
             return RiskCheckResult(
                 False,
-                f"Insufficient liquidity: ${max_liq:.0f} available, need ${self.min_bet:.0f} min"
+                f"Insufficient liquidity: ${max_liq:.2f} available, need ${self.min_bet:.0f} min"
             )
 
         return RiskCheckResult(True, None)
