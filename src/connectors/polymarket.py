@@ -233,6 +233,7 @@ class PolymarketConnector(BaseConnector):
         self._http: httpx.AsyncClient | None = None
         self._ws = None
         self._running = False
+        self._trading_client = None  # Lazy-init for trading
 
     async def connect(self) -> None:
         self._http = httpx.AsyncClient(
@@ -991,3 +992,96 @@ class PolymarketConnector(BaseConnector):
             except Exception:
                 logger.exception("Polymarket WS error")
                 await asyncio.sleep(5)
+
+    # ========== TRADING METHODS ==========
+
+    def _ensure_trading_client(self):
+        """Lazily initialize the py-clob-client for trading."""
+        if self._trading_client is None:
+            from py_clob_client.client import ClobClient
+
+            if not settings.poly_private_key:
+                raise ValueError("POLY_PRIVATE_KEY not configured")
+
+            self._trading_client = ClobClient(
+                host=settings.polymarket_clob_api,
+                key=settings.poly_private_key,
+                chain_id=137,  # Polygon mainnet
+                signature_type=2,  # Browser wallet proxy
+                funder=settings.poly_funder_address or None,
+            )
+            # Derive API credentials
+            self._trading_client.set_api_creds(
+                self._trading_client.create_or_derive_api_creds()
+            )
+        return self._trading_client
+
+    async def get_balance(self) -> float:
+        """Get USDC balance on Polymarket."""
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
+        client = self._ensure_trading_client()
+        result = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        # Balance is in 6-decimal USDC format as string
+        balance_raw = result.get("balance", "0")
+        return float(balance_raw) / 1_000_000
+
+    async def place_order(
+        self,
+        token_id: str,
+        side: str,  # "BUY" or "SELL"
+        price: float,
+        size: float,
+        order_type: str = "GTC",  # "GTC" or "FOK"
+    ) -> dict:
+        """Place an order on Polymarket.
+
+        Args:
+            token_id: The CLOB token ID
+            side: "BUY" or "SELL"
+            price: Price per share (0-1)
+            size: Number of shares/contracts
+            order_type: "GTC" (good till cancelled) or "FOK" (fill or kill)
+
+        Returns:
+            Dict with success, orderID, errorMsg etc.
+        """
+        from py_clob_client.order_builder.constants import BUY, SELL
+
+        client = self._ensure_trading_client()
+
+        # Convert side to py-clob-client constant
+        side_const = BUY if side.upper() == "BUY" else SELL
+
+        try:
+            if order_type == "FOK":
+                # Market order with FOK (fill or kill)
+                from py_clob_client.clob_types import MarketOrderArgs
+
+                order_args = MarketOrderArgs(
+                    token_id=token_id,
+                    amount=size,
+                    price=price,
+                )
+                signed_order = client.create_market_order(order_args)
+                result = client.post_order(signed_order, "FOK")
+            else:
+                # Limit order GTC
+                from py_clob_client.clob_types import OrderArgs
+
+                order_args = OrderArgs(
+                    token_id=token_id,
+                    price=price,
+                    size=size,
+                    side=side_const,
+                )
+                signed_order = client.create_order(order_args)
+                result = client.post_order(signed_order, "GTC")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Polymarket place_order failed: {e}")
+            return {"success": False, "errorMsg": str(e)}

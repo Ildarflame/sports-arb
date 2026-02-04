@@ -1025,3 +1025,82 @@ class KalshiConnector(BaseConnector):
         if m:
             return m.group(1).strip()
         return ""
+
+    # ========== TRADING METHODS ==========
+
+    async def get_balance(self) -> float:
+        """Get available USD balance on Kalshi."""
+        if not self._http:
+            raise RuntimeError("Kalshi connector not connected")
+
+        headers = self._get_auth_headers("GET", "/portfolio/balance")
+        resp = await self._http.get("/portfolio/balance", headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        # Balance is in cents
+        balance_cents = data.get("balance", 0)
+        return balance_cents / 100
+
+    async def place_order(
+        self,
+        ticker: str,
+        side: str,  # "yes" or "no"
+        action: str,  # "buy" or "sell"
+        count: int,  # number of contracts
+        price_cents: int,  # price in cents (1-99)
+        time_in_force: str = "fill_or_kill",  # or "gtc", "ioc"
+    ) -> dict:
+        """Place an order on Kalshi.
+
+        Args:
+            ticker: Market ticker (e.g. "KXNBA-26FEB04-LAL")
+            side: "yes" or "no"
+            action: "buy" or "sell"
+            count: Number of contracts
+            price_cents: Price in cents (1-99)
+            time_in_force: "fill_or_kill", "gtc", or "ioc"
+
+        Returns:
+            Dict with order_id, status, etc.
+        """
+        if not self._http:
+            raise RuntimeError("Kalshi connector not connected")
+
+        order_data = {
+            "ticker": ticker,
+            "side": side,
+            "action": action,
+            "count": count,
+            "type": "limit",
+            "yes_price" if side == "yes" else "no_price": price_cents,
+            "time_in_force": time_in_force,
+        }
+
+        try:
+            headers = self._get_auth_headers("POST", "/portfolio/orders")
+            resp = await self._http.post(
+                "/portfolio/orders",
+                json=order_data,
+                headers=headers,
+            )
+
+            if resp.status_code == 201 or resp.status_code == 200:
+                data = resp.json()
+                order = data.get("order", {})
+                return {
+                    "order_id": order.get("order_id"),
+                    "status": order.get("status"),
+                    "ticker": order.get("ticker"),
+                    "side": order.get("side"),
+                    "action": order.get("action"),
+                }
+            else:
+                error_data = resp.json() if resp.content else {}
+                return {
+                    "error": error_data.get("message", f"HTTP {resp.status_code}"),
+                    "status": "failed",
+                }
+
+        except Exception as e:
+            logger.error(f"Kalshi place_order failed: {e}")
+            return {"error": str(e), "status": "failed"}
