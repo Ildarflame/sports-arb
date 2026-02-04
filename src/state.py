@@ -20,6 +20,9 @@ app_state: dict = {
     "last_tag_discovery": 0.0,   # monotonic timestamp of last tag discovery run
     # Per-sport scan timing
     "scan_metrics_by_sport": {},  # sport -> duration in seconds
+    # Matched events cache (avoids re-running matcher every scan)
+    "matched_events_cache": {},   # (poly_id, kalshi_id) -> SportEvent
+    "matched_events_cache_time": 0.0,  # When cache was built
     # Executor components (set in main.py)
     "executor_settings_manager": None,
     "executor_ws_handler": None,

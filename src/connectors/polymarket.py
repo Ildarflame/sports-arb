@@ -782,16 +782,45 @@ class PolymarketConnector(BaseConnector):
         return result
 
     async def fetch_book(self, token_id: str) -> MarketPrice | None:
-        """Fetch order book for bid/ask spread."""
+        """Fetch order book with full depth for bid/ask spread and liquidity analysis."""
+        from src.models import OrderBookLevel, OrderBookDepth
+
         try:
             resp = await self._clob.get(f"/book", params={"token_id": token_id})
             resp.raise_for_status()
             data = resp.json()
-            bids = data.get("bids", [])
-            asks = data.get("asks", [])
+            raw_bids = data.get("bids", [])
+            raw_asks = data.get("asks", [])
 
-            best_bid: float | None = max((float(b["price"]) for b in bids), default=None) if bids else None
-            best_ask: float | None = min((float(a["price"]) for a in asks), default=None) if asks else None
+            # Parse into OrderBookLevel objects with full depth
+            # Bids sorted by price descending (best/highest first)
+            bids = sorted(
+                [OrderBookLevel(price=float(b["price"]), size=float(b["size"])) for b in raw_bids],
+                key=lambda x: -x.price,
+            )
+            # Asks sorted by price ascending (best/lowest first)
+            asks = sorted(
+                [OrderBookLevel(price=float(a["price"]), size=float(a["size"])) for a in raw_asks],
+                key=lambda x: x.price,
+            )
+
+            # Create YES depth
+            yes_depth = OrderBookDepth(bids=bids, asks=asks)
+
+            # Derive NO depth by inverting prices
+            # NO bid = 1 - YES ask, NO ask = 1 - YES bid
+            no_bids = sorted(
+                [OrderBookLevel(price=round(1.0 - a.price, 4), size=a.size) for a in asks],
+                key=lambda x: -x.price,
+            )
+            no_asks = sorted(
+                [OrderBookLevel(price=round(1.0 - b.price, 4), size=b.size) for b in bids],
+                key=lambda x: x.price,
+            )
+            no_depth = OrderBookDepth(bids=no_bids, asks=no_asks)
+
+            best_bid = yes_depth.best_bid
+            best_ask = yes_depth.best_ask
 
             # Filter out junk orders: bid/ask spread > 90% means empty book
             if best_bid is not None and best_ask is not None:
@@ -803,6 +832,8 @@ class PolymarketConnector(BaseConnector):
                     )
                     best_bid = None
                     best_ask = None
+                    yes_depth = None
+                    no_depth = None
 
             # Compute midpoint only from meaningful bid/ask
             if best_bid is not None and best_ask is not None:
@@ -816,6 +847,8 @@ class PolymarketConnector(BaseConnector):
                 mid_resp = await self._clob.get("/midpoint", params={"token_id": token_id})
                 mid_resp.raise_for_status()
                 mid = float(mid_resp.json().get("mid", 0))
+                yes_depth = None
+                no_depth = None
 
             if mid <= 0:
                 return None
@@ -825,6 +858,10 @@ class PolymarketConnector(BaseConnector):
                 no_price=round(1 - mid, 4),
                 yes_bid=best_bid,
                 yes_ask=best_ask,
+                no_bid=round(1 - best_ask, 4) if best_ask else None,
+                no_ask=round(1 - best_bid, 4) if best_bid else None,
+                yes_depth=yes_depth,
+                no_depth=no_depth,
                 last_updated=datetime.now(UTC),
             )
         except Exception:

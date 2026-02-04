@@ -30,9 +30,10 @@ from src.state import app_state
 # Cache refresh intervals (seconds)
 KALSHI_CACHE_TTL = 600  # 10 minutes
 POLY_CACHE_TTL = 300    # 5 minutes
+MATCH_CACHE_TTL = 300   # 5 minutes for matched events cache
 
-# Concurrency limiter for price fetches
-_price_semaphore = asyncio.Semaphore(15)
+# Concurrency limiter for price fetches (increased from 15 for faster book fetches)
+_price_semaphore = asyncio.Semaphore(25)
 
 # Token → event mapping for O(1) WS price application
 _token_to_event: dict[str, SportEvent] = {}
@@ -493,8 +494,34 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 f"kalshi={'HIT' if not fetch_kalshi else 'MISS'})"
             )
 
-            # Match events across platforms
-            matched = match_events(poly_markets, kalshi_markets)
+            # Match events across platforms (with caching)
+            match_cache_age = now - app_state["matched_events_cache_time"]
+            use_match_cache = (
+                match_cache_age < MATCH_CACHE_TTL
+                and app_state["matched_events_cache"]
+                and not fetch_poly
+                and not fetch_kalshi
+            )
+
+            if use_match_cache:
+                # Reuse cached matches - much faster than re-running matcher
+                matched = list(app_state["matched_events_cache"].values())
+                logger.info(f"Using cached matches ({len(matched)} events, {match_cache_age:.0f}s old)")
+            else:
+                # Full re-match required
+                matched = match_events(poly_markets, kalshi_markets)
+                # Build cache: (poly_id, kalshi_id) -> SportEvent
+                app_state["matched_events_cache"] = {
+                    (
+                        e.markets.get(Platform.POLYMARKET).market_id if e.markets.get(Platform.POLYMARKET) else "",
+                        e.markets.get(Platform.KALSHI).market_id if e.markets.get(Platform.KALSHI) else "",
+                    ): e
+                    for e in matched
+                    if e.matched
+                }
+                app_state["matched_events_cache_time"] = now
+                logger.info(f"Rebuilt match cache ({len(matched)} events)")
+
             app_state["matched_events"] = matched
 
             # Update WS subscriptions with current matched token_ids

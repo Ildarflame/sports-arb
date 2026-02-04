@@ -114,6 +114,15 @@ class RiskManager:
         if not opp.details.get("executable"):
             return RiskCheckResult(False, "Requires executable bid/ask prices")
 
+        # 8. Liquidity check - ensure enough liquidity for minimum bet
+        liquidity = opp.details.get("liquidity", {})
+        max_liq = liquidity.get("max_at_best", 0) if liquidity else 0
+        if max_liq < self.min_bet:
+            return RiskCheckResult(
+                False,
+                f"Insufficient liquidity: ${max_liq:.0f} available, need ${self.min_bet:.0f} min"
+            )
+
         return RiskCheckResult(True, None)
 
     def calculate_bet_size(
@@ -124,18 +133,24 @@ class RiskManager:
     ) -> float:
         """Calculate optimal bet size within limits.
 
-        Uses conservative sizing: min of max_bet and available balance.
+        Uses conservative sizing: min of max_bet, available balance, and liquidity.
         """
         # Can't bet more than we have on either platform
         max_by_balance = min(poly_balance, kalshi_balance)
 
-        # Apply configured limits
-        bet = min(self.max_bet, max_by_balance)
+        # Can't bet more than available liquidity
+        liquidity = opp.details.get("liquidity", {})
+        max_by_liquidity = liquidity.get("max_at_best", float("inf")) if liquidity else float("inf")
+
+        # Apply configured limits - consider balance and liquidity
+        bet = min(self.max_bet, max_by_balance, max_by_liquidity)
         bet = max(bet, self.min_bet)
 
-        # Final sanity check
+        # Final sanity checks
         if bet > max_by_balance:
             bet = max_by_balance
+        if bet > max_by_liquidity:
+            bet = max_by_liquidity
 
         return round(bet, 2)
 

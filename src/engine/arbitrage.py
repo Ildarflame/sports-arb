@@ -579,6 +579,21 @@ def calculate_arbitrage(
         else:
             best_opp.details["confidence"] = "low"
 
+        # Q5: Liquidity analysis - how much can be executed at these prices
+        try:
+            from src.engine.liquidity import analyze_arbitrage_liquidity
+
+            liquidity = analyze_arbitrage_liquidity(
+                event=event,
+                buy_yes_platform=best_opp.platform_buy_yes,
+                yes_price=best_opp.yes_price,
+                no_price=best_opp.no_price,
+            )
+            if liquidity:
+                best_opp.details["liquidity"] = liquidity.to_dict()
+        except Exception as e:
+            logger.debug(f"Liquidity analysis failed for {event.title}: {e}")
+
         # Q4: Auto-eligible flag for automated trading
         is_suspicious = best_opp.details.get("suspicious", False)
         conf = best_opp.details.get("confidence", "low")

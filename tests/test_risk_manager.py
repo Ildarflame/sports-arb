@@ -46,6 +46,12 @@ def sample_opportunity():
             "arb_type": "yes_no",
             "poly_side": "BUY",
             "kalshi_side": "no",
+            "liquidity": {
+                "max_at_best": 100.0,
+                "max_1pct_slip": 200.0,
+                "max_2pct_slip": 300.0,
+                "bottleneck": "polymarket",
+            },
         },
     )
 
@@ -121,3 +127,32 @@ def test_calculate_bet_size_respects_balance(risk_manager, sample_opportunity):
     """Bet size should not exceed available balance."""
     bet = risk_manager.calculate_bet_size(sample_opportunity, poly_balance=1.5, kalshi_balance=10)
     assert bet <= 1.5
+
+
+def test_insufficient_liquidity(risk_manager, sample_opportunity):
+    """Should reject if liquidity too low for minimum bet."""
+    sample_opportunity.details["liquidity"] = {"max_at_best": 0.5}
+    result = risk_manager.check_opportunity(sample_opportunity, poly_balance=10, kalshi_balance=10)
+    assert not result.passed
+    assert "liquidity" in result.reason.lower()
+
+
+def test_no_liquidity_data(risk_manager, sample_opportunity):
+    """Should reject if no liquidity data available."""
+    sample_opportunity.details.pop("liquidity", None)
+    result = risk_manager.check_opportunity(sample_opportunity, poly_balance=10, kalshi_balance=10)
+    assert not result.passed
+    assert "liquidity" in result.reason.lower()
+
+
+def test_calculate_bet_size_respects_liquidity(risk_manager, sample_opportunity):
+    """Bet size should not exceed available liquidity."""
+    # Liquidity is 100, balance is high, max_bet is 2
+    # Should cap at 2 (max_bet)
+    bet = risk_manager.calculate_bet_size(sample_opportunity, poly_balance=10, kalshi_balance=10)
+    assert bet == 2.0  # max_bet
+
+    # Now with very low liquidity
+    sample_opportunity.details["liquidity"]["max_at_best"] = 1.5
+    bet = risk_manager.calculate_bet_size(sample_opportunity, poly_balance=10, kalshi_balance=10)
+    assert bet == 1.5  # limited by liquidity
