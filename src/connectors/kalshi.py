@@ -1033,7 +1033,7 @@ class KalshiConnector(BaseConnector):
         if not self._http:
             raise RuntimeError("Kalshi connector not connected")
 
-        headers = self._get_auth_headers("GET", "/portfolio/balance")
+        headers = self._sign_request("GET", "/portfolio/balance")
         resp = await self._http.get("/portfolio/balance", headers=headers)
         resp.raise_for_status()
         data = resp.json()
@@ -1077,7 +1077,7 @@ class KalshiConnector(BaseConnector):
         }
 
         try:
-            headers = self._get_auth_headers("POST", "/portfolio/orders")
+            headers = self._sign_request("POST", "/portfolio/orders")
             resp = await self._http.post(
                 "/portfolio/orders",
                 json=order_data,
