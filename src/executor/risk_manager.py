@@ -67,8 +67,14 @@ class RiskManager:
             return RiskCheckResult(False, "3-way arbs not yet supported for auto-execution")
 
         # Skip if missing trading identifiers
-        if not opp.details.get("poly_token_id") or not opp.details.get("kalshi_ticker"):
-            return RiskCheckResult(False, "Missing trading identifiers (poly_token_id or kalshi_ticker)")
+        if not opp.details.get("poly_token_id"):
+            return RiskCheckResult(False, "Missing poly_token_id")
+        if not opp.details.get("kalshi_ticker"):
+            return RiskCheckResult(False, "Missing kalshi_ticker")
+        if not opp.details.get("poly_side"):
+            return RiskCheckResult(False, "Missing poly_side (BUY expected)")
+        if not opp.details.get("kalshi_side"):
+            return RiskCheckResult(False, "Missing kalshi_side (yes/no expected)")
 
         # 1. Kill switch
         if not self.enabled:
