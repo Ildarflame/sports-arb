@@ -276,7 +276,9 @@ def calculate_arbitrage(
                     "market_type": market_type,
                     # Trading identifiers for executor
                     "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                    "poly_side": "BUY",
                     "kalshi_ticker": kalshi_market.market_id,
+                    "kalshi_side": "no" if not event.teams_swapped else "yes",
                 },
             )
 
@@ -351,8 +353,10 @@ def calculate_arbitrage(
                     "market_subtype": market_subtype,
                     "market_type": market_type,
                     # Trading identifiers for executor
-                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None, None])[1],
+                    "poly_side": "BUY",
                     "kalshi_ticker": kalshi_market.market_id,
+                    "kalshi_side": "yes" if not event.teams_swapped else "no",
                 },
             )
 
@@ -457,7 +461,9 @@ def calculate_arbitrage(
                         "market_type": market_type,
                         # Trading identifiers for executor
                         "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                        "poly_side": "BUY",
                         "kalshi_ticker": kalshi_market.market_id,
+                        "kalshi_side": "yes",
                     },
                 )
 
@@ -524,8 +530,10 @@ def calculate_arbitrage(
                         "market_subtype": market_subtype,
                         "market_type": market_type,
                         # Trading identifiers for executor
-                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None, None])[1],
+                        "poly_side": "BUY",
                         "kalshi_ticker": kalshi_market.market_id,
+                        "kalshi_side": "no",
                     },
                 )
 
