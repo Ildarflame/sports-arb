@@ -40,19 +40,19 @@ class OrderPlacer:
             opp.no_price,
         )
 
-        # Determine sides based on which platform is buy YES vs buy NO
-        if opp.platform_buy_yes == Platform.POLYMARKET:
-            poly_side = "BUY"
-            kalshi_side = "no"
-            kalshi_action = "buy"
-        else:
-            poly_side = "SELL"  # Buying NO = selling YES on Poly
-            kalshi_side = "yes"
-            kalshi_action = "buy"
+        # Use explicit sides from arbitrage calculation
+        # Polymarket: always BUY the correct token (team_a or team_b)
+        poly_side = opp.details.get("poly_side", "BUY")
+        # Kalshi: use the pre-calculated side from arbitrage.py
+        kalshi_side = opp.details.get("kalshi_side", "no")
+        kalshi_action = "buy"
 
         # Get market identifiers from details
         poly_token_id = opp.details.get("poly_token_id", "")
         kalshi_ticker = opp.details.get("kalshi_ticker", "")
+
+        # Log for debugging
+        logger.info(f"Order sides: poly={poly_side} token={poly_token_id[:30] if poly_token_id else 'NONE'}... kalshi={kalshi_side}")
 
         if not poly_token_id or not kalshi_ticker:
             logger.error(f"Missing market IDs: poly={poly_token_id}, kalshi={kalshi_ticker}")
