@@ -673,7 +673,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                     arb_key = (
                         opp.team_a,
                         opp.platform_buy_yes.value,
-                        "3way",  # Special key for 3-way arbs
+                        opp.platform_buy_no.value,  # Match DB key format
                     )
                     current_arb_keys.add(arb_key)
 
