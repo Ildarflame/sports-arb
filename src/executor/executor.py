@@ -40,113 +40,128 @@ class Executor:
 
         Returns ExecutionResult if executed, None if skipped.
         """
-        # Get current balances
-        try:
-            poly_balance = await self.poly.get_balance()
-            kalshi_balance = await self.kalshi.get_balance()
-        except Exception as e:
-            logger.error(f"Failed to fetch balances: {e}")
-            return None
-
-        # Run risk checks
-        logger.info(f"EXEC CHECKING: {opp.event_title} ROI={opp.roi_after_fees}% poly={poly_balance:.2f} kalshi={kalshi_balance:.2f} | poly_token={opp.details.get('poly_token_id', 'NONE')[:20] if opp.details.get('poly_token_id') else 'NONE'} kalshi_ticker={opp.details.get('kalshi_ticker', 'NONE')}")
-        check = self.risk.check_opportunity(opp, poly_balance, kalshi_balance)
-        if not check.passed:
-            logger.info(f"RISK REJECTED: {opp.event_title} | {check.reason}")
-            return None
-
-        # Calculate bet size
-        bet_size = self.risk.calculate_bet_size(opp, poly_balance, kalshi_balance)
-        if bet_size <= 0:
-            logger.debug(f"Bet size too small for {opp.event_title}")
-            return None
-
         # Use kalshi_ticker as unique key for deduplication (more reliable than team names)
         kalshi_ticker = opp.details.get("kalshi_ticker", "")
         dedup_key = kalshi_ticker if kalshi_ticker else f"{opp.team_a}:{opp.team_b}"
 
-        # CRITICAL: Add to open positions BEFORE executing to prevent duplicates
-        # This prevents race conditions where multiple scans try to execute same opportunity
-        self.risk.add_open_position(dedup_key)
+        # CRITICAL: Reserve position slot FIRST to prevent race conditions
+        # This atomic check-and-reserve prevents duplicate executions when
+        # multiple scans try to execute the same opportunity concurrently
+        if not self.risk.try_reserve_position(dedup_key):
+            logger.debug(f"Position already reserved/open: {opp.event_title}")
+            return None
 
-        logger.info(f"EXECUTING: {opp.event_title} | ROI={opp.roi_after_fees}% | bet=${bet_size} | key={dedup_key}")
-
-        # Execute the trade
-        result = await self.placer.execute(opp, bet_size)
-
-        # Calculate expected profit
-        expected_profit = bet_size * (opp.roi_after_fees / 100)
-
-        # Handle result
-        if result.status == ExecutionStatus.SUCCESS:
-            # Save position with retry for database locks
-            position = self._create_position(opp, result, bet_size)
-            for attempt in range(3):
-                try:
-                    await self.positions.save_position(position)
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        logger.warning(f"Retry {attempt + 1}/3 saving position: {e}")
-                        import asyncio
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                    else:
-                        logger.error(f"Failed to save position after 3 attempts: {e}")
-            self.risk.record_trade(dedup_key)
-
-            logger.info(f"SUCCESS: {opp.event_title} | Expected profit: ${expected_profit:.2f}")
-
-        elif result.status == ExecutionStatus.PARTIAL:
-            # Partial fill - save position with partial status
-            position = self._create_position(opp, result, bet_size)
-            position.status = "partial"
-            for attempt in range(3):
-                try:
-                    await self.positions.save_position(position)
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        logger.warning(f"Retry {attempt + 1}/3 saving partial position: {e}")
-                        import asyncio
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                    else:
-                        logger.error(f"Failed to save partial position after 3 attempts: {e}")
-
-            logger.warning(f"PARTIAL: {opp.event_title} - needs attention!")
-
-        else:
-            # Both legs failed - remove from open positions so it can be retried
-            self.risk.remove_open_position(dedup_key)
-            logger.warning(f"FAILED: {opp.event_title} - both legs failed, will retry")
-
-        # Send notification
+        execution_started = False
         try:
-            new_poly_balance = await self.poly.get_balance()
-            new_kalshi_balance = await self.kalshi.get_balance()
-        except Exception:
-            new_poly_balance = poly_balance
-            new_kalshi_balance = kalshi_balance
+            # Get current balances
+            try:
+                poly_balance = await self.poly.get_balance()
+                kalshi_balance = await self.kalshi.get_balance()
+            except Exception as e:
+                logger.error(f"Failed to fetch balances: {e}")
+                return None
 
-        await self.telegram.notify_execution(
-            result=result,
-            event_title=opp.event_title,
-            roi=opp.roi_after_fees,
-            profit=expected_profit,
-            poly_balance=new_poly_balance,
-            kalshi_balance=new_kalshi_balance,
-        )
+            # Run risk checks
+            logger.info(f"EXEC CHECKING: {opp.event_title} ROI={opp.roi_after_fees}% poly={poly_balance:.2f} kalshi={kalshi_balance:.2f} | poly_token={opp.details.get('poly_token_id', 'NONE')[:20] if opp.details.get('poly_token_id') else 'NONE'} kalshi_ticker={opp.details.get('kalshi_ticker', 'NONE')}")
+            check = self.risk.check_opportunity(opp, poly_balance, kalshi_balance)
+            if not check.passed:
+                logger.info(f"RISK REJECTED: {opp.event_title} | {check.reason}")
+                return None
 
-        # Check if we hit kill switch conditions
-        stats = self.risk.get_stats()
-        if stats["daily_pnl"] <= -self.risk.max_daily_loss:
-            self.risk.enabled = False
-            await self.telegram.notify_kill_switch(
-                reason="Daily loss limit reached",
-                daily_trades=stats["daily_trades"],
-                pnl=stats["daily_pnl"],
+            # Calculate bet size
+            bet_size = self.risk.calculate_bet_size(opp, poly_balance, kalshi_balance)
+            if bet_size <= 0:
+                logger.debug(f"Bet size too small for {opp.event_title}")
+                return None
+
+            logger.info(f"EXECUTING: {opp.event_title} | ROI={opp.roi_after_fees}% | bet=${bet_size} | key={dedup_key}")
+            execution_started = True
+
+            # Execute the trade
+            result = await self.placer.execute(opp, bet_size)
+
+            # Calculate expected profit
+            expected_profit = bet_size * (opp.roi_after_fees / 100)
+
+            # Handle result
+            if result.status == ExecutionStatus.SUCCESS:
+                # Convert reservation to open position
+                self.risk.confirm_reservation(dedup_key)
+                # Save position with retry for database locks
+                position = self._create_position(opp, result, bet_size)
+                for attempt in range(3):
+                    try:
+                        await self.positions.save_position(position)
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            logger.warning(f"Retry {attempt + 1}/3 saving position: {e}")
+                            import asyncio
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                        else:
+                            logger.error(f"Failed to save position after 3 attempts: {e}")
+                self.risk.record_trade(dedup_key)
+
+                logger.info(f"SUCCESS: {opp.event_title} | Expected profit: ${expected_profit:.2f}")
+
+            elif result.status == ExecutionStatus.PARTIAL:
+                # Convert reservation to open position (need to track partial too)
+                self.risk.confirm_reservation(dedup_key)
+                # Partial fill - save position with partial status
+                position = self._create_position(opp, result, bet_size)
+                position.status = "partial"
+                for attempt in range(3):
+                    try:
+                        await self.positions.save_position(position)
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            logger.warning(f"Retry {attempt + 1}/3 saving partial position: {e}")
+                            import asyncio
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                        else:
+                            logger.error(f"Failed to save partial position after 3 attempts: {e}")
+
+                logger.warning(f"PARTIAL: {opp.event_title} - needs attention!")
+
+            else:
+                # Both legs failed - release reservation so it can be retried
+                self.risk.release_reservation(dedup_key)
+                logger.warning(f"FAILED: {opp.event_title} - both legs failed, will retry")
+
+            # Send notification
+            try:
+                new_poly_balance = await self.poly.get_balance()
+                new_kalshi_balance = await self.kalshi.get_balance()
+            except Exception:
+                new_poly_balance = poly_balance
+                new_kalshi_balance = kalshi_balance
+
+            await self.telegram.notify_execution(
+                result=result,
+                event_title=opp.event_title,
+                roi=opp.roi_after_fees,
+                profit=expected_profit,
+                poly_balance=new_poly_balance,
+                kalshi_balance=new_kalshi_balance,
             )
 
-        return result
+            # Check if we hit kill switch conditions
+            stats = self.risk.get_stats()
+            if stats["daily_pnl"] <= -self.risk.max_daily_loss:
+                self.risk.enabled = False
+                await self.telegram.notify_kill_switch(
+                    reason="Daily loss limit reached",
+                    daily_trades=stats["daily_trades"],
+                    pnl=stats["daily_pnl"],
+                )
+
+            return result
+
+        finally:
+            # Release reservation if we didn't start execution or if something went wrong
+            if not execution_started:
+                self.risk.release_reservation(dedup_key)
 
     def _create_position(
         self,

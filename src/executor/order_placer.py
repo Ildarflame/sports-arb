@@ -66,6 +66,14 @@ class OrderPlacer:
                 kalshi_leg=LegResult("kalshi", False, None, 0, 0, 0, "Skipped due to Poly minimum"),
             )
 
+        # Kalshi minimum is effectively 1 contract; ensure meaningful trade size
+        if kalshi_amount < 1.0:
+            logger.warning(f"Kalshi amount ${kalshi_amount:.2f} below $1 minimum, skipping")
+            return ExecutionResult(
+                poly_leg=LegResult("polymarket", False, None, 0, 0, 0, "Skipped due to Kalshi minimum"),
+                kalshi_leg=LegResult("kalshi", False, None, 0, 0, 0, f"Amount ${kalshi_amount:.2f} below $1 minimum"),
+            )
+
         if not poly_token_id or not kalshi_ticker:
             logger.error(f"Missing market IDs: poly={poly_token_id}, kalshi={kalshi_ticker}")
             return ExecutionResult(
@@ -171,8 +179,8 @@ class OrderPlacer:
 
             # Parse actual filled amounts from response
             # For market orders, matchedAmount is in shares
-            filled_shares = float(result.get("matchedAmount", 0)) if success else 0
-            avg_price = float(result.get("avgPrice", price)) if success else 0
+            filled_shares = float(result.get("matchedAmount") or 0) if success else 0
+            avg_price = float(result.get("avgPrice") or price) if success else 0
             filled_cost = filled_shares * avg_price if success else 0
 
             # For FOK orders: if matchedAmount=0, order was KILLED (no fill)

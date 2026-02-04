@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import time
+from collections import defaultdict
 from datetime import date, timedelta
 
 import uvicorn
@@ -548,8 +549,7 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                 await fetch_and_update_prices(poly, kalshi, matched)
 
                 # Group events by sport for parallel processing
-                from collections import defaultdict as _defaultdict
-                sport_groups: dict[str, list[SportEvent]] = _defaultdict(list)
+                sport_groups: dict[str, list[SportEvent]] = defaultdict(list)
                 for event in matched:
                     sport_groups[_get_event_sport(event)].append(event)
 

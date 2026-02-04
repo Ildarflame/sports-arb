@@ -697,6 +697,10 @@ class PolymarketConnector(BaseConnector):
             resp.raise_for_status()
             data = resp.json()
             mid = float(data.get("mid", 0))
+            # Validate midpoint is reasonable (not 0 or 1)
+            if mid <= 0 or mid >= 1:
+                logger.debug(f"Invalid midpoint {mid} for {market_id[:20]}, falling back to Gamma")
+                return await self._fetch_price_gamma(market_id)
             return MarketPrice(
                 yes_price=mid,
                 no_price=round(1 - mid, 4),
@@ -957,10 +961,13 @@ class PolymarketConnector(BaseConnector):
 
         self._running = True
         ws_url = settings.polymarket_ws_url
+        reconnect_delay = 2  # Start with 2 second delay
+        max_delay = 60  # Cap at 60 seconds
 
         while self._running:
             try:
                 async with websockets.connect(ws_url) as ws:
+                    reconnect_delay = 2  # Reset delay on successful connection
                     self._ws = ws
                     # Single subscription message with all asset IDs
                     sub_msg = json.dumps({
@@ -1031,11 +1038,13 @@ class PolymarketConnector(BaseConnector):
                             continue
 
             except websockets.ConnectionClosed:
-                logger.warning("Polymarket WS disconnected, reconnecting...")
-                await asyncio.sleep(2)
+                logger.warning(f"Polymarket WS disconnected, reconnecting in {reconnect_delay}s...")
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max_delay)  # Exponential backoff
             except Exception:
                 logger.exception("Polymarket WS error")
-                await asyncio.sleep(5)
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max_delay)  # Exponential backoff
 
     # ========== TRADING METHODS ==========
 

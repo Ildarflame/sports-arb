@@ -372,6 +372,8 @@ async def api_calculate(request: Request):
         no_platform=no_plat,
         bankroll=bankroll,
     )
+    if result is None:
+        return {"error": "Invalid prices - no arbitrage opportunity"}
     result["opp_id"] = opp_id
     result["bankroll"] = bankroll
     return result

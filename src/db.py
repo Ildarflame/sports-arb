@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_opps_active ON opportunities(still_active, found_at);
+CREATE INDEX IF NOT EXISTS idx_opps_dedup ON opportunities(still_active, team_a, platform_buy_yes, platform_buy_no);
 
 CREATE TABLE IF NOT EXISTS roi_snapshots (
     opp_id TEXT NOT NULL,
@@ -106,13 +107,15 @@ class Database:
     async def connect(self) -> None:
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
+        # Enable foreign key enforcement
+        await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(SCHEMA)
         # Run migrations for existing databases
         for migration in [_MIGRATION_ADD_SPORT] + _MIGRATION_ADD_LIFETIME:
             try:
                 await self._db.execute(migration)
-            except Exception:
-                pass  # Column already exists
+            except aiosqlite.OperationalError:
+                pass  # Column already exists (expected for existing databases)
         # One-time cleanup: purge legacy garbage data (ROI > 50% = stale/illiquid artifacts)
         cur = await self._db.execute(
             "DELETE FROM opportunities WHERE roi_after_fees > 50 AND still_active = 0"

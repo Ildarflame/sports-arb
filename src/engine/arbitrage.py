@@ -659,14 +659,19 @@ def calculate_bet_sizes(
     yes_platform: Platform,
     no_platform: Platform,
     bankroll: float = 100.0,
-) -> dict:
+) -> dict | None:
     """Calculate optimal bet sizes for an arbitrage opportunity.
 
     For a binary arb (YES on one platform + NO on another), allocate
     bankroll proportionally so that guaranteed profit is maximized.
 
-    Returns dict with yes_bet, no_bet, guaranteed_profit, roi_on_capital.
+    Returns dict with yes_bet, no_bet, guaranteed_profit, roi_on_capital,
+    or None if inputs are invalid (no arb exists or prices are invalid).
     """
+    # Validate inputs - prices must be in valid range
+    if yes_price <= 0 or yes_price >= 1 or no_price <= 0 or no_price >= 1:
+        return None
+
     fee_yes = FEES.get(yes_platform, 0.02)
     fee_no = FEES.get(no_platform, 0.02)
 
@@ -675,15 +680,9 @@ def calculate_bet_sizes(
     cost_no = no_price * (1 + fee_no)
     total_cost_per_unit = cost_yes + cost_no
 
-    if total_cost_per_unit <= 0 or total_cost_per_unit >= 1.0:
-        # No arb or invalid
-        units = bankroll / max(total_cost_per_unit, 0.01)
-        return {
-            "yes_bet": round(cost_yes * units, 2),
-            "no_bet": round(cost_no * units, 2),
-            "guaranteed_profit": round((1.0 - total_cost_per_unit) * units, 2),
-            "roi_on_capital": round((1.0 - total_cost_per_unit) / total_cost_per_unit * 100, 2) if total_cost_per_unit > 0 else 0,
-        }
+    # No arbitrage if total cost >= 1.0 (would lose money)
+    if total_cost_per_unit >= 1.0:
+        return None
 
     # Buy `units` contracts: each pays $1, costs total_cost_per_unit
     units = bankroll / total_cost_per_unit

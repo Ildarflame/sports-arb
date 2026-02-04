@@ -38,6 +38,7 @@ class RiskManager:
         self._daily_pnl = 0.0
         self._current_date = date.today()
         self._open_positions: set[str] = set()  # event keys with open positions
+        self._reserved_positions: set[str] = set()  # positions being processed (not yet executed)
 
     def _reset_daily_if_needed(self) -> None:
         """Reset daily counters if date changed."""
@@ -103,6 +104,8 @@ class RiskManager:
         event_key = kalshi_ticker.lower() if kalshi_ticker else f"{opp.team_a}:{opp.team_b}".lower()
         if event_key in self._open_positions:
             return RiskCheckResult(False, f"Already have open position on {opp.event_title} ({event_key})")
+        if event_key in self._reserved_positions:
+            return RiskCheckResult(False, f"Position already being processed: {opp.event_title} ({event_key})")
 
         # 6. Confidence check - require HIGH confidence for all arbs
         # This ensures good liquidity and reliable prices
@@ -159,6 +162,28 @@ class RiskManager:
         self._daily_trades += 1
         self._daily_pnl += pnl
         logger.info(f"Trade recorded: daily={self._daily_trades}, pnl=${self._daily_pnl:.2f}")
+
+    def try_reserve_position(self, event_key: str) -> bool:
+        """Atomically check and reserve a position slot.
+
+        Returns True if reservation succeeded, False if already reserved/open.
+        This prevents race conditions between check and execution.
+        """
+        key = event_key.lower()
+        if key in self._open_positions or key in self._reserved_positions:
+            return False
+        self._reserved_positions.add(key)
+        return True
+
+    def confirm_reservation(self, event_key: str) -> None:
+        """Convert reservation to open position after successful execution."""
+        key = event_key.lower()
+        self._reserved_positions.discard(key)
+        self._open_positions.add(key)
+
+    def release_reservation(self, event_key: str) -> None:
+        """Release reservation without opening position (execution failed)."""
+        self._reserved_positions.discard(event_key.lower())
 
     def add_open_position(self, event_key: str) -> None:
         """Track open position to prevent duplicates."""
