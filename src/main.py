@@ -801,7 +801,8 @@ async def run_app() -> None:
             )
             risk_manager = RiskManager()
             order_placer = OrderPlacer(poly, kalshi)
-            position_manager = PositionManager(db)
+            position_manager = PositionManager()  # Uses settings.db_path automatically
+            await position_manager.connect()
             telegram = TelegramNotifier(
                 settings.telegram_bot_token,
                 settings.telegram_chat_id
