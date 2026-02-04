@@ -1033,9 +1033,8 @@ class KalshiConnector(BaseConnector):
         if not self._http:
             raise RuntimeError("Kalshi connector not connected")
 
-        headers = self._sign_request("GET", "/portfolio/balance")
-        resp = await self._http.get("/portfolio/balance", headers=headers)
-        resp.raise_for_status()
+        # Use _request_with_retry which correctly signs the full path
+        resp = await self._request_with_retry("GET", "/portfolio/balance")
         data = resp.json()
         # Balance is in cents
         balance_cents = data.get("balance", 0)
@@ -1077,11 +1076,15 @@ class KalshiConnector(BaseConnector):
         }
 
         try:
-            headers = self._sign_request("POST", "/portfolio/orders")
+            # Sign request with full path (including /trade-api/v2 prefix)
+            req = self._http.build_request("POST", "/portfolio/orders", json=order_data)
+            full_path = req.url.raw_path.decode()
+            auth_headers = self._sign_request("POST", full_path)
+
             resp = await self._http.post(
                 "/portfolio/orders",
                 json=order_data,
-                headers=headers,
+                headers=auth_headers,
             )
 
             if resp.status_code == 201 or resp.status_code == 200:
