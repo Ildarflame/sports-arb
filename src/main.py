@@ -897,6 +897,24 @@ async def run_app() -> None:
                 poly_connector=poly,
                 kalshi_connector=kalshi,
             )
+
+            # Subscribe to settings changes to keep risk_manager in sync
+            def on_settings_changed(new_settings):
+                """Update risk_manager when settings change via UI."""
+                risk_manager.enabled = new_settings.enabled
+                risk_manager.min_bet = new_settings.min_bet
+                risk_manager.max_bet = new_settings.max_bet
+                risk_manager.min_roi = new_settings.min_roi
+                risk_manager.max_roi = new_settings.max_roi
+                risk_manager.max_daily_trades = new_settings.max_daily_trades
+                risk_manager.max_daily_loss = new_settings.max_daily_loss
+                logger.info(f"RiskManager synced: enabled={new_settings.enabled}")
+
+            settings_manager.subscribe(on_settings_changed)
+
+            # Store executor in app_state for dashboard access
+            app_state["executor"] = _executor
+
             logger.info("Executor initialized and ENABLED")
         except Exception as e:
             logger.error(f"Failed to initialize executor: {e}")
