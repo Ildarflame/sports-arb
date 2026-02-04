@@ -1140,3 +1140,20 @@ class PolymarketConnector(BaseConnector):
         except Exception as e:
             logger.error(f"Polymarket place_order failed: {e}")
             return {"success": False, "errorMsg": str(e)}
+
+    async def get_order(self, order_id: str) -> dict:
+        """Get order status by order ID.
+
+        Args:
+            order_id: The order ID returned from place_order
+
+        Returns:
+            Dict with order status, matchedAmount, etc.
+        """
+        client = self._ensure_trading_client()
+        try:
+            result = client.get_order(order_id)
+            return result
+        except Exception as e:
+            logger.error(f"Polymarket get_order failed: {e}")
+            return {"error": str(e)}

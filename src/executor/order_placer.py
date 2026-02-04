@@ -176,16 +176,52 @@ class OrderPlacer:
 
             success = result.get("success", False)
             order_id = result.get("orderID") or result.get("order_id")
+            status = result.get("status", "")
+
+            # If status is 'delayed', poll for actual order status
+            # The order was accepted but fill details aren't ready yet
+            if success and status == "delayed" and order_id:
+                logger.info(f"Poly order delayed, polling status for {order_id}...")
+                for attempt in range(5):
+                    await asyncio.sleep(0.5)  # Wait 500ms between polls
+                    order_status = await self.poly.get_order(order_id)
+                    if order_status.get("error"):
+                        logger.warning(f"Failed to get order status: {order_status}")
+                        break
+
+                    new_status = order_status.get("status", "")
+                    logger.info(f"Poll {attempt + 1}: status={new_status}, order={order_status}")
+
+                    if new_status == "MATCHED":
+                        # Order was filled!
+                        result = order_status
+                        status = "matched"
+                        break
+                    elif new_status in ("CANCELLED", "KILLED"):
+                        # Order was not filled
+                        success = False
+                        status = new_status.lower()
+                        break
+                    # If still delayed/live, keep polling
 
             # Parse actual filled amounts from response
-            # For market orders, matchedAmount is in shares
-            filled_shares = float(result.get("matchedAmount") or 0) if success else 0
-            avg_price = float(result.get("avgPrice") or price) if success else 0
+            # For market orders, matchedAmount/size_matched is in shares
+            filled_shares = 0
+            if success:
+                # Try different field names that Poly might use
+                matched = result.get("matchedAmount") or result.get("size_matched")
+                if matched:
+                    filled_shares = float(matched)
+                elif result.get("associate_trades"):
+                    # Try to get from trades array
+                    trades = result.get("associate_trades", [])
+                    if trades and len(trades) > 0:
+                        filled_shares = float(trades[0].get("size", 0))
+            avg_price = float(result.get("avgPrice") or result.get("price") or price) if success else 0
             filled_cost = filled_shares * avg_price if success else 0
 
-            # For FOK orders: if matchedAmount=0, order was KILLED (no fill)
-            # DO NOT estimate fills - this caused bugs where we thought order filled but it didn't
-            if success and filled_shares == 0:
+            # For FOK orders: if matchedAmount=0 AND status isn't 'delayed', order was KILLED
+            if success and filled_shares == 0 and status != "delayed":
                 logger.warning(
                     f"Poly FOK order returned success but matchedAmount=0 - treating as FAILED. "
                     f"Response: {result}"
@@ -194,7 +230,7 @@ class OrderPlacer:
 
             logger.info(
                 f"Poly {side}: {filled_shares:.2f} shares × ${avg_price:.2f} = ${filled_cost:.2f} "
-                f"(success={success}, orderId={order_id})"
+                f"(success={success}, orderId={order_id}, status={status})"
             )
 
             return LegResult(

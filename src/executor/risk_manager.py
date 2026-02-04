@@ -100,12 +100,13 @@ class RiskManager:
             return RiskCheckResult(False, f"Daily loss limit reached: ${abs(self._daily_pnl):.2f}")
 
         # 5. Duplicate position check - use kalshi_ticker as unique key (more reliable)
+        # Note: _reserved_positions check is NOT done here - that's handled by try_reserve_position()
+        # in executor.py BEFORE check_opportunity() is called. Checking it here would reject
+        # our own reservation.
         kalshi_ticker = opp.details.get("kalshi_ticker", "")
         event_key = kalshi_ticker.lower() if kalshi_ticker else f"{opp.team_a}:{opp.team_b}".lower()
         if event_key in self._open_positions:
             return RiskCheckResult(False, f"Already have open position on {opp.event_title} ({event_key})")
-        if event_key in self._reserved_positions:
-            return RiskCheckResult(False, f"Position already being processed: {opp.event_title} ({event_key})")
 
         # 6. Confidence check - require HIGH confidence for all arbs
         # This ensures good liquidity and reliable prices
