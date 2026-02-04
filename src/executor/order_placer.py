@@ -175,14 +175,18 @@ class OrderPlacer:
             avg_price = float(result.get("avgPrice", price)) if success else 0
             filled_cost = filled_shares * avg_price if success else 0
 
-            # Fallback: estimate from dollar_amount if no matchedAmount
+            # For FOK orders: if matchedAmount=0, order was KILLED (no fill)
+            # DO NOT estimate fills - this caused bugs where we thought order filled but it didn't
             if success and filled_shares == 0:
-                filled_shares = dollar_amount / price if price > 0 else 0
-                filled_cost = dollar_amount
-                avg_price = price
+                logger.warning(
+                    f"Poly FOK order returned success but matchedAmount=0 - treating as FAILED. "
+                    f"Response: {result}"
+                )
+                success = False  # Override: no fill = failure
 
             logger.info(
-                f"Poly {side}: {filled_shares:.2f} shares × ${avg_price:.2f} = ${filled_cost:.2f}"
+                f"Poly {side}: {filled_shares:.2f} shares × ${avg_price:.2f} = ${filled_cost:.2f} "
+                f"(success={success}, orderId={order_id})"
             )
 
             return LegResult(

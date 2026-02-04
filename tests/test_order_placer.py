@@ -42,6 +42,8 @@ async def test_execute_both_success(sample_opportunity):
     mock_poly.place_order.return_value = {
         "success": True,
         "orderID": "poly_123",
+        "matchedAmount": 5.0,  # Filled shares
+        "avgPrice": 0.51,
     }
 
     mock_kalshi = AsyncMock()
@@ -91,6 +93,8 @@ async def test_execute_kalshi_fails(sample_opportunity):
     mock_poly.place_order.return_value = {
         "success": True,
         "orderID": "poly_123",
+        "matchedAmount": 5.0,  # Filled shares
+        "avgPrice": 0.51,
     }
 
     mock_kalshi = AsyncMock()
@@ -124,6 +128,33 @@ async def test_execute_both_fail(sample_opportunity):
     assert result.status == ExecutionStatus.FAILED
     assert not result.poly_leg.success
     assert not result.kalshi_leg.success
+
+
+@pytest.mark.asyncio
+async def test_poly_fok_no_fill_treated_as_failure(sample_opportunity):
+    """FOK order with success=True but matchedAmount=0 should be treated as failure."""
+    mock_poly = AsyncMock()
+    mock_poly.place_order.return_value = {
+        "success": True,  # API says success
+        "orderID": "poly_123",
+        # BUT matchedAmount=0 or missing means no fill
+    }
+
+    mock_kalshi = AsyncMock()
+    mock_kalshi.place_order.return_value = {
+        "order_id": "kalshi_456",
+        "status": "filled",
+        "count_filled": 4,
+    }
+
+    placer = OrderPlacer(poly_connector=mock_poly, kalshi_connector=mock_kalshi)
+    result = await placer.execute(sample_opportunity, bet_size=5.0)
+
+    # Poly should be treated as failed (no fill), Kalshi should be rolled back
+    assert result.status == ExecutionStatus.ROLLED_BACK
+    assert not result.poly_leg.success  # Override to False due to no matchedAmount
+    assert result.kalshi_leg.success
+    assert result.rollback_leg is not None
 
 
 def test_calculate_leg_sizes():
