@@ -420,26 +420,8 @@ async def _process_sport_group(
             if opp:
                 # Recalc produced arb with real bid/ask — use it
                 results.append((event, opp))
-            else:
-                # Arb disappeared at real prices — keep midpoint arb but
-                # enrich with bid/ask data so dashboard shows market info
-                pm = event.markets.get(Platform.POLYMARKET)
-                km = event.markets.get(Platform.KALSHI)
-                if pm and pm.price:
-                    midpoint_opp.details["poly_yes_bid"] = pm.price.yes_bid
-                    midpoint_opp.details["poly_yes_ask"] = pm.price.yes_ask
-                    midpoint_opp.details["has_poly_exec"] = bool(
-                        pm.price.yes_bid and pm.price.yes_ask
-                    )
-                if km and km.price:
-                    midpoint_opp.details["kalshi_yes_bid"] = km.price.yes_bid
-                    midpoint_opp.details["kalshi_yes_ask"] = km.price.yes_ask
-                    midpoint_opp.details["has_kalshi_exec"] = bool(
-                        km.price.yes_bid and km.price.yes_ask
-                    )
-                midpoint_opp.details["midpoint_only"] = True
-                midpoint_opp.details["confidence"] = "low"
-                results.append((event, midpoint_opp))
+            # Midpoint-only arbs (no arb at real prices) are now discarded
+            # — they can't be executed profitably anyway
 
     duration = time.monotonic() - start
     return results, duration
