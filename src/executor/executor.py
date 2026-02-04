@@ -79,12 +79,19 @@ class Executor:
 
         # Handle result
         if result.status == ExecutionStatus.SUCCESS:
-            # Save position
+            # Save position with retry for database locks
             position = self._create_position(opp, result, bet_size)
-            try:
-                await self.positions.save_position(position)
-            except Exception as e:
-                logger.error(f"Failed to save position: {e}")
+            for attempt in range(3):
+                try:
+                    await self.positions.save_position(position)
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        logger.warning(f"Retry {attempt + 1}/3 saving position: {e}")
+                        import asyncio
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    else:
+                        logger.error(f"Failed to save position after 3 attempts: {e}")
             self.risk.record_trade(dedup_key)
 
             logger.info(f"SUCCESS: {opp.event_title} | Expected profit: ${expected_profit:.2f}")
@@ -93,10 +100,17 @@ class Executor:
             # Partial fill - save position with partial status
             position = self._create_position(opp, result, bet_size)
             position.status = "partial"
-            try:
-                await self.positions.save_position(position)
-            except Exception as e:
-                logger.error(f"Failed to save partial position: {e}")
+            for attempt in range(3):
+                try:
+                    await self.positions.save_position(position)
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        logger.warning(f"Retry {attempt + 1}/3 saving partial position: {e}")
+                        import asyncio
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    else:
+                        logger.error(f"Failed to save partial position after 3 attempts: {e}")
 
             logger.warning(f"PARTIAL: {opp.event_title} - needs attention!")
 
