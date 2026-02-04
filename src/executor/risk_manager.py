@@ -92,10 +92,11 @@ class RiskManager:
         if self._daily_pnl <= -self.max_daily_loss:
             return RiskCheckResult(False, f"Daily loss limit reached: ${abs(self._daily_pnl):.2f}")
 
-        # 5. Duplicate position check
-        event_key = f"{opp.team_a}:{opp.team_b}".lower()
+        # 5. Duplicate position check - use kalshi_ticker as unique key (more reliable)
+        kalshi_ticker = opp.details.get("kalshi_ticker", "")
+        event_key = kalshi_ticker.lower() if kalshi_ticker else f"{opp.team_a}:{opp.team_b}".lower()
         if event_key in self._open_positions:
-            return RiskCheckResult(False, f"Already have open position on {opp.event_title}")
+            return RiskCheckResult(False, f"Already have open position on {opp.event_title} ({event_key})")
 
         # 6. Confidence check for live arbs
         if opp.details.get("is_live"):

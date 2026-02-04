@@ -16,6 +16,9 @@ dependencies = [
     "rapidfuzz>=3.10.0",
     "cryptography>=43.0.0",
     "sse-starlette>=2.1.0",
+    # Executor dependencies
+    "py-clob-client>=0.34.0",
+    "python-telegram-bot>=22.0",
 ]
 
 [project.optional-dependencies]

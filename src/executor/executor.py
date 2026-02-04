@@ -49,9 +49,10 @@ class Executor:
             return None
 
         # Run risk checks
+        logger.info(f"EXEC CHECKING: {opp.event_title} ROI={opp.roi_after_fees}% poly={poly_balance:.2f} kalshi={kalshi_balance:.2f} | poly_token={opp.details.get('poly_token_id', 'NONE')[:20] if opp.details.get('poly_token_id') else 'NONE'} kalshi_ticker={opp.details.get('kalshi_ticker', 'NONE')}")
         check = self.risk.check_opportunity(opp, poly_balance, kalshi_balance)
         if not check.passed:
-            logger.debug(f"Risk check failed for {opp.event_title}: {check.reason}")
+            logger.info(f"RISK REJECTED: {opp.event_title} | {check.reason}")
             return None
 
         # Calculate bet size
@@ -60,7 +61,15 @@ class Executor:
             logger.debug(f"Bet size too small for {opp.event_title}")
             return None
 
-        logger.info(f"EXECUTING: {opp.event_title} | ROI={opp.roi_after_fees}% | bet=${bet_size}")
+        # Use kalshi_ticker as unique key for deduplication (more reliable than team names)
+        kalshi_ticker = opp.details.get("kalshi_ticker", "")
+        dedup_key = kalshi_ticker if kalshi_ticker else f"{opp.team_a}:{opp.team_b}"
+
+        # CRITICAL: Add to open positions BEFORE executing to prevent duplicates
+        # This prevents race conditions where multiple scans try to execute same opportunity
+        self.risk.add_open_position(dedup_key)
+
+        logger.info(f"EXECUTING: {opp.event_title} | ROI={opp.roi_after_fees}% | bet=${bet_size} | key={dedup_key}")
 
         # Execute the trade
         result = await self.placer.execute(opp, bet_size)
@@ -72,9 +81,11 @@ class Executor:
         if result.status == ExecutionStatus.SUCCESS:
             # Save position
             position = self._create_position(opp, result, bet_size)
-            await self.positions.save_position(position)
-            self.risk.add_open_position(f"{opp.team_a}:{opp.team_b}")
-            self.risk.record_trade(f"{opp.team_a}:{opp.team_b}")
+            try:
+                await self.positions.save_position(position)
+            except Exception as e:
+                logger.error(f"Failed to save position: {e}")
+            self.risk.record_trade(dedup_key)
 
             logger.info(f"SUCCESS: {opp.event_title} | Expected profit: ${expected_profit:.2f}")
 
@@ -82,13 +93,17 @@ class Executor:
             # Partial fill - save position with partial status
             position = self._create_position(opp, result, bet_size)
             position.status = "partial"
-            await self.positions.save_position(position)
-            self.risk.add_open_position(f"{opp.team_a}:{opp.team_b}")
+            try:
+                await self.positions.save_position(position)
+            except Exception as e:
+                logger.error(f"Failed to save partial position: {e}")
 
             logger.warning(f"PARTIAL: {opp.event_title} - needs attention!")
 
         else:
-            logger.warning(f"FAILED: {opp.event_title} - both legs failed")
+            # Both legs failed - remove from open positions so it can be retried
+            self.risk.remove_open_position(dedup_key)
+            logger.warning(f"FAILED: {opp.event_title} - both legs failed, will retry")
 
         # Send notification
         try:

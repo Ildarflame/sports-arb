@@ -274,6 +274,9 @@ def calculate_arbitrage(
                     "executable": has_exec_d1,
                     "market_subtype": market_subtype,
                     "market_type": market_type,
+                    # Trading identifiers for executor
+                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                    "kalshi_ticker": kalshi_market.market_id,
                 },
             )
 
@@ -347,6 +350,9 @@ def calculate_arbitrage(
                     "executable": has_exec_d2,
                     "market_subtype": market_subtype,
                     "market_type": market_type,
+                    # Trading identifiers for executor
+                    "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                    "kalshi_ticker": kalshi_market.market_id,
                 },
             )
 
@@ -449,6 +455,9 @@ def calculate_arbitrage(
                         "executable": bool(pp.yes_ask and kp_original.yes_ask),
                         "market_subtype": market_subtype,
                         "market_type": market_type,
+                        # Trading identifiers for executor
+                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                        "kalshi_ticker": kalshi_market.market_id,
                     },
                 )
 
@@ -514,6 +523,9 @@ def calculate_arbitrage(
                         "executable": bool(pp.yes_bid and kp_original.yes_bid),
                         "market_subtype": market_subtype,
                         "market_type": market_type,
+                        # Trading identifiers for executor
+                        "poly_token_id": poly_market.raw_data.get("clob_token_ids", [None])[0],
+                        "kalshi_ticker": kalshi_market.market_id,
                     },
                 )
 

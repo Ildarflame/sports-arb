@@ -1064,6 +1064,7 @@ class PolymarketConnector(BaseConnector):
                     token_id=token_id,
                     amount=size,
                     price=price,
+                    side=side_const,
                 )
                 signed_order = client.create_market_order(order_args)
                 result = client.post_order(signed_order, "FOK")
