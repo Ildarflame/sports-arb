@@ -774,8 +774,29 @@ async def kalshi_price_poller(kalshi: KalshiConnector) -> None:
             await asyncio.sleep(10)
 
 
+def _kill_existing_on_port(port: int) -> None:
+    """Kill any existing process on the given port (Linux only)."""
+    import subprocess
+    try:
+        # Find and kill process using the port
+        result = subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            logger.info(f"Killed existing process on port {port}")
+            import time
+            time.sleep(2)  # Wait for port to be released
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass  # fuser not available or timed out
+
+
 async def run_app() -> None:
     """Start connectors, DB, web server, and scan loop."""
+    # Kill any existing process on our port to avoid conflicts
+    _kill_existing_on_port(settings.port)
+
     # Init DB
     await db.connect()
     logger.info(f"Database connected: {settings.db_path}")

@@ -33,18 +33,20 @@ class OrderPlacer:
         Returns:
             ExecutionResult with status and leg details
         """
-        # Calculate sizes for each leg
-        poly_size, kalshi_size = self._calculate_leg_sizes(
-            bet_size,
-            opp.yes_price,
-            opp.no_price,
-        )
-
         # Use explicit sides from arbitrage calculation
         # Polymarket: always BUY the correct token (team_a or team_b)
         poly_side = opp.details.get("poly_side", "BUY")
         # Kalshi: use the pre-calculated side from arbitrage.py
         kalshi_side = opp.details.get("kalshi_side", "no")
+
+        # Calculate sizes for each leg (accounting for Kalshi NO vs YES pricing)
+        poly_size, kalshi_size = self._calculate_leg_sizes(
+            bet_size,
+            opp.yes_price,  # Poly price
+            opp.no_price,   # Kalshi YES price (we calculate NO price inside)
+            kalshi_side,
+        )
+
         kalshi_action = "buy"
 
         # Get market identifiers from details
@@ -52,7 +54,10 @@ class OrderPlacer:
         kalshi_ticker = opp.details.get("kalshi_ticker", "")
 
         # Log for debugging
-        logger.info(f"Order sides: poly={poly_side} token={poly_token_id[:30] if poly_token_id else 'NONE'}... kalshi={kalshi_side}")
+        logger.info(
+            f"Order: poly={poly_side} ${poly_size:.2f}@{opp.yes_price:.2f}, "
+            f"kalshi={kalshi_side} ${kalshi_size:.2f}@{opp.no_price:.2f} (total=${bet_size:.2f})"
+        )
 
         if not poly_token_id or not kalshi_ticker:
             logger.error(f"Missing market IDs: poly={poly_token_id}, kalshi={kalshi_ticker}")
@@ -167,26 +172,41 @@ class OrderPlacer:
         self,
         bet_size: float,
         poly_price: float,
-        kalshi_price: float,
+        kalshi_yes_price: float,
+        kalshi_side: str,
     ) -> tuple[float, float]:
         """Calculate dollar amounts for each leg.
 
-        Allocates proportionally to prices so that payout is equal
-        regardless of which outcome wins.
+        For equal payout arbitrage, we need EQUAL number of contracts on each platform.
+        Each contract pays $1 if it wins.
+
+        poly_price: cost to buy 1 Poly contract (e.g., 0.48)
+        kalshi_yes_price: Kalshi YES price (we derive NO price from it)
+        kalshi_side: "yes" or "no" - determines which price to use
         """
-        total_price = poly_price + kalshi_price
-        if total_price <= 0:
+        # Calculate actual cost per contract on Kalshi based on side
+        if kalshi_side == "no":
+            kalshi_cost = 1 - kalshi_yes_price  # NO price = 1 - YES price
+        else:
+            kalshi_cost = kalshi_yes_price
+
+        # Cost for 1 "set" of contracts (1 Poly + 1 Kalshi)
+        cost_per_set = poly_price + kalshi_cost
+        if cost_per_set <= 0:
             return bet_size / 2, bet_size / 2
 
-        poly_ratio = poly_price / total_price
-        kalshi_ratio = kalshi_price / total_price
+        # How many sets can we buy with our budget?
+        num_sets = bet_size / cost_per_set
 
-        poly_size = round(bet_size * poly_ratio, 2)
-        kalshi_size = round(bet_size * kalshi_ratio, 2)
+        # Allocate proportionally to each platform
+        poly_size = round(num_sets * poly_price, 2)
+        kalshi_size = round(num_sets * kalshi_cost, 2)
 
-        # Ensure total matches bet_size
+        # Ensure total matches bet_size (rounding fix)
         diff = bet_size - (poly_size + kalshi_size)
-        if diff != 0:
-            poly_size = round(poly_size + diff, 2)
+        if abs(diff) > 0.01:
+            # Split difference
+            poly_size = round(poly_size + diff / 2, 2)
+            kalshi_size = round(kalshi_size + diff / 2, 2)
 
         return poly_size, kalshi_size
