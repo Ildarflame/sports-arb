@@ -15,6 +15,9 @@ from src.db import db
 from src.engine.arbitrage import calculate_arbitrage, calculate_3way_arbitrage
 from src.engine.matcher import match_events, find_3way_groups
 from src.models import ArbitrageOpportunity, MarketPrice, Platform, SportEvent, ThreeWayGroup
+
+# Executor imports (conditional to avoid breaking if not configured)
+_executor = None  # Global executor instance
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -614,6 +617,15 @@ async def scan_loop(poly: PolymarketConnector, kalshi: KalshiConnector) -> None:
                             "cost": opp.total_cost,
                         })
 
+                        # Try to execute if executor is enabled
+                        if _executor is not None and opp.roi_after_fees >= settings.executor_min_roi:
+                            try:
+                                result = await _executor.try_execute(opp)
+                                if result:
+                                    logger.info(f"EXECUTOR: {opp.event_title} -> {result.status.value}")
+                            except Exception as e:
+                                logger.error(f"Executor error for {opp.event_title}: {e}")
+
                 # Process 3-way arbitrage results
                 for opp in threeway_results:
                     if not (opp.roi_after_fees >= settings.min_arb_percent):
@@ -778,6 +790,36 @@ async def run_app() -> None:
     kalshi = KalshiConnector()
     await poly.connect()
     await kalshi.connect()
+
+    # Init executor if enabled
+    global _executor
+    if settings.executor_enabled:
+        try:
+            from src.executor import (
+                Executor, RiskManager, OrderPlacer,
+                PositionManager, TelegramNotifier
+            )
+            risk_manager = RiskManager()
+            order_placer = OrderPlacer(poly, kalshi)
+            position_manager = PositionManager(db)
+            telegram = TelegramNotifier(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id
+            )
+            _executor = Executor(
+                risk_manager=risk_manager,
+                order_placer=order_placer,
+                position_manager=position_manager,
+                telegram=telegram,
+                poly_connector=poly,
+                kalshi_connector=kalshi,
+            )
+            logger.info("Executor initialized and ENABLED")
+        except Exception as e:
+            logger.error(f"Failed to initialize executor: {e}")
+            _executor = None
+    else:
+        logger.info("Executor is DISABLED (set EXECUTOR_ENABLED=true to enable)")
 
     # Setup web routes (deferred to avoid circular import)
     from src.web.app import setup_routes
