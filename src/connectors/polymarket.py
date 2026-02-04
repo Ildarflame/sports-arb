@@ -822,6 +822,12 @@ class PolymarketConnector(BaseConnector):
             best_bid = yes_depth.best_bid
             best_ask = yes_depth.best_ask
 
+            # Debug: log book state for diagnosis
+            if not raw_bids or not raw_asks:
+                logger.debug(
+                    f"Book for {token_id[:20]}: empty - bids={len(raw_bids)}, asks={len(raw_asks)}"
+                )
+
             # Filter out junk orders: bid/ask spread > 90% means empty book
             if best_bid is not None and best_ask is not None:
                 spread = best_ask - best_bid
@@ -844,6 +850,7 @@ class PolymarketConnector(BaseConnector):
                 mid = best_ask
             else:
                 # Truly empty book — fall back to /midpoint
+                logger.info(f"Book empty for {token_id[:20]}, falling back to midpoint API")
                 mid_resp = await self._clob.get("/midpoint", params={"token_id": token_id})
                 mid_resp.raise_for_status()
                 mid = float(mid_resp.json().get("mid", 0))
