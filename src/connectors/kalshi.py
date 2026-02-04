@@ -321,6 +321,10 @@ class KalshiConnector(BaseConnector):
             full_path = req.url.raw_path.decode()
             auth_headers = self._sign_request(method, full_path)
 
+            # Debug logging for portfolio endpoints
+            if "portfolio" in path:
+                logger.info(f"Kalshi portfolio request: {method} {full_path}")
+
             resp = await self._http.request(method, path, params=params, headers=auth_headers)
             if resp.status_code == 429:
                 wait = 2 * (attempt + 1)
