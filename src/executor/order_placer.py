@@ -57,6 +57,15 @@ class OrderPlacer:
             f"kalshi={kalshi_side} ${kalshi_amount:.2f} (total=${bet_size:.2f})"
         )
 
+        # CRITICAL: Validate minimum order sizes
+        # Polymarket requires minimum $1 per order
+        if poly_amount < 1.0:
+            logger.warning(f"Poly amount ${poly_amount:.2f} below $1 minimum, skipping")
+            return ExecutionResult(
+                poly_leg=LegResult("polymarket", False, None, 0, 0, 0, f"Amount ${poly_amount:.2f} below $1 minimum"),
+                kalshi_leg=LegResult("kalshi", False, None, 0, 0, 0, "Skipped due to Poly minimum"),
+            )
+
         if not poly_token_id or not kalshi_ticker:
             logger.error(f"Missing market IDs: poly={poly_token_id}, kalshi={kalshi_ticker}")
             return ExecutionResult(
@@ -259,13 +268,20 @@ class OrderPlacer:
         token_id: str,
         original_leg: LegResult,
     ) -> LegResult:
-        """Rollback Polymarket position by selling at market."""
+        """Rollback Polymarket position by selling at market.
+
+        Use 20% of original price as floor to avoid catastrophic loss.
+        """
         try:
-            # Sell the shares we bought
+            # Use 20% of original price as floor (lose max 80%, not 99%)
+            floor_price = max(original_leg.filled_price * 0.2, 0.05)
+
+            logger.info(f"Poly rollback: {original_leg.filled_shares} shares, original={original_leg.filled_price:.2f}, sell at={floor_price:.2f}")
+
             result = await self.poly.place_order(
                 token_id=token_id,
                 side="SELL",
-                price=0.01,  # Low price for market sell (FOK will get best available)
+                price=floor_price,
                 size=original_leg.filled_shares,
                 order_type="FOK",
             )
@@ -301,12 +317,20 @@ class OrderPlacer:
         original_side: str,
         original_leg: LegResult,
     ) -> LegResult:
-        """Rollback Kalshi position by selling at market."""
+        """Rollback Kalshi position by selling at market.
+
+        Use a reasonable floor price (20% of original) to avoid catastrophic loss.
+        Better to fail rollback than sell at 1 cent.
+        """
         try:
             contracts = int(original_leg.filled_shares)
 
-            # Sell at low price for market execution
-            price_cents = 1  # Minimum price for quick fill
+            # Use 20% of original price as floor (lose max 80%, not 99%)
+            # This gives better chance of fill while limiting loss
+            original_cents = int(original_leg.filled_price * 100)
+            price_cents = max(original_cents // 5, 5)  # At least 5 cents, or 20% of original
+
+            logger.info(f"Kalshi rollback: {contracts} contracts, original={original_cents}c, sell at={price_cents}c")
 
             result = await self.kalshi.place_order(
                 ticker=ticker,

@@ -41,8 +41,8 @@ class Settings(BaseSettings):
 
     # Executor settings
     executor_enabled: bool = False
-    executor_min_bet: float = 1.0
-    executor_max_bet: float = 2.0
+    executor_min_bet: float = 2.5  # Minimum $2.50 ensures both legs >= $1
+    executor_max_bet: float = 5.0  # Increased to allow reasonable arbs
     executor_min_roi: float = 1.0
     executor_max_roi: float = 50.0
     executor_max_daily_trades: int = 50

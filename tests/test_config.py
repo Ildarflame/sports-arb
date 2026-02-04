@@ -17,8 +17,8 @@ def test_executor_settings_exist():
 
     # Executor limits
     assert hasattr(s, "executor_enabled")  # Disabled by default for safety
-    assert s.executor_min_bet == 1.0
-    assert s.executor_max_bet == 2.0
+    assert s.executor_min_bet == 2.5  # Ensures both legs >= $1
+    assert s.executor_max_bet == 5.0
     assert s.executor_min_roi == 1.0
     assert s.executor_max_daily_trades == 50
     assert s.executor_max_daily_loss == 5.0
