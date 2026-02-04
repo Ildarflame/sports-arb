@@ -321,10 +321,6 @@ class KalshiConnector(BaseConnector):
             full_path = req.url.raw_path.decode()
             auth_headers = self._sign_request(method, full_path)
 
-            # Debug logging for portfolio endpoints
-            if "portfolio" in path:
-                logger.info(f"Kalshi portfolio request: {method} {full_path}")
-
             resp = await self._http.request(method, path, params=params, headers=auth_headers)
             if resp.status_code == 429:
                 wait = 2 * (attempt + 1)
@@ -1037,8 +1033,16 @@ class KalshiConnector(BaseConnector):
         if not self._http:
             raise RuntimeError("Kalshi connector not connected")
 
-        # Use _request_with_retry which correctly signs the full path
-        resp = await self._request_with_retry("GET", "/portfolio/balance")
+        # Sign the full path directly (not relying on httpx base_url)
+        path = "/trade-api/v2/portfolio/balance"
+        auth_headers = self._sign_request("GET", path)
+
+        # Make direct request to full URL
+        url = f"https://api.elections.kalshi.com{path}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=auth_headers)
+
+        resp.raise_for_status()
         data = resp.json()
         # Balance is in cents
         balance_cents = data.get("balance", 0)
@@ -1066,9 +1070,6 @@ class KalshiConnector(BaseConnector):
         Returns:
             Dict with order_id, status, etc.
         """
-        if not self._http:
-            raise RuntimeError("Kalshi connector not connected")
-
         order_data = {
             "ticker": ticker,
             "side": side,
@@ -1080,16 +1081,15 @@ class KalshiConnector(BaseConnector):
         }
 
         try:
-            # Sign request with full path (including /trade-api/v2 prefix)
-            req = self._http.build_request("POST", "/portfolio/orders", json=order_data)
-            full_path = req.url.raw_path.decode()
-            auth_headers = self._sign_request("POST", full_path)
+            # Sign the full path directly
+            path = "/trade-api/v2/portfolio/orders"
+            auth_headers = self._sign_request("POST", path)
+            auth_headers["Content-Type"] = "application/json"
 
-            resp = await self._http.post(
-                "/portfolio/orders",
-                json=order_data,
-                headers=auth_headers,
-            )
+            # Make direct request to full URL
+            url = f"https://api.elections.kalshi.com{path}"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(url, json=order_data, headers=auth_headers)
 
             if resp.status_code == 201 or resp.status_code == 200:
                 data = resp.json()
